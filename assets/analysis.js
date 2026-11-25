@@ -35,7 +35,7 @@
       const best = (list, val, descending = true) => list.slice().sort((a, b) => descending ? val(b) - val(a) : val(a) - val(b))[0] || null;
       return { key, count: xs.length, km: sum('km'), movS: sum('movS'), pace: sum('movS') / sum('km'),
         vdot: mean(xs.map(a => a.ivdot).filter(Number.isFinite)), hr: weighted('hr'), cad: weighted('cad'), stride: weighted('stride'),
-        asc: xs.some(a => a.asc == null) ? null : sum('asc'), load: xs.some(a => a.load == null) ? null : sum('load'),
+        asc: xs.some(a => a.asc == null) ? null : sum('asc'), load: xs.some(a => a.load == null) ? null : sum('load'), ascKnown: sum('asc'), ascMissing: xs.filter(a => a.asc == null).length, loadKnown: sum('load'), loadMissing: xs.filter(a => a.load == null).length,
         records: { longest: best(xs, a => a.km), fastest: best(xs.filter(a => a.km >= 5), a => a.movS / a.km, false), climb: best(xs.filter(a => a.asc != null), a => a.asc), load: best(xs.filter(a => a.load != null), a => a.load) } };
     });
   }

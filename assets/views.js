@@ -52,24 +52,35 @@
       } catch (e) { out.tomorrow = null; }
       return out;
     }
+    function evidenceItems(reasons) {
+      return reasons.map(e => {
+        const values = Object.entries(e.values).map(([k, v]) => `<span class="ev-k">${esc(k)}</span> ${esc(typeof v === 'number' && !Number.isInteger(v) ? +v.toFixed(1) : v)}`).join('<i>·</i>');
+        return `<li><div class="ev-v">${values}</div><div class="ev-r">${esc(e.rule)}</div><small>来源：${esc(e.source)}</small></li>`;
+      }).join('');
+    }
     function evidence(reasons) {
-      const items = reasons.map(e => {
-        const values = Object.entries(e.values).map(([k, v]) => `${esc(k)}：${esc(typeof v === 'number' && !Number.isInteger(v) ? +v.toFixed(1) : v)}`).join('；');
-        return `<li>${values}<br>${esc(e.rule)}<small>来源：${esc(e.source)}</small></li>`;
-      });
-      return `<details><summary>为什么 · 展开依据</summary><ul>${items.join('')}</ul></details>`;
+      return reasons.length ? `<details class="why"><summary>为什么 · 展开依据</summary><ul>${evidenceItems(reasons)}</ul></details>` : '';
     }
     function coachCard() {
       const a = advice();
-      return a ? `<section class="card coach">
-        <h3>私教今日建议 · ${a.phase}</h3>
-        <p class="lead">${esc(a.today.summary)}</p>
-        ${evidence(a.today.reasons)}
-        ${a.risks.map(x => `<p class="callout">${x.level}风险：${esc(x.text)}</p>${evidence(x.reasons)}`).join('')}
-        ${a.tomorrow ? `<p class="tomorrow"><b>明日预案（${esc(a.tomorrow.today.type || '')}）：</b>${esc(a.tomorrow.today.summary)}<small>假设今天不再训练；明早按实际状态和日志重新判断。</small></p>` : ''}
-        <p class="muted">置信度：${a.confidence} · ${esc(a.confidenceText)}</p>
-        <div class="row"><a class="btn" href="#training/journal">写今天的日志</a><a class="btn ghost" href="#analysis/fitness">查看分析与依据 →</a></div>
-      </section>` : '';
+      if (!a) return '';
+      // 依据只出现一次：今日建议与各项风险的依据合并、去重后放进同一个折叠区。
+      const seen = new Set(), all = [...a.today.reasons, ...a.risks.flatMap(x => x.reasons)].filter(e => {
+        const key = e.rule + JSON.stringify(e.values); if (seen.has(key)) return false; seen.add(key); return true;
+      });
+      const t = a.today;
+      const zoneOk = /^[EMTIR]$/.test(t.zone || '');
+      const dose = t.type === '已完成' ? '' : t.durationMin ? (t.durationMin[1] === 0 ? '休息' : `${t.durationMin[0] ? t.durationMin[0] + '–' : '≤'}${t.durationMin[1]} 分钟${zoneOk ? ' · ' + t.zone + ' 区' : ''}`) : '';
+      return `<section class="card coach">
+        <div class="coach-head"><span class="eyebrow">私教今日建议</span><span class="pill">${esc(a.phase)}</span></div>
+        <div class="coach-type"><b>${esc(t.type === '已完成' ? '今日训练已完成' : t.type)}</b>${dose ? `<span>${esc(dose)}</span>` : ''}</div>
+        <p class="lead">${esc(t.summary)}</p>
+        ${a.risks.map(x => `<p class="callout ${x.level === '高' ? 'bad' : 'warn'}"><b>${x.level}风险</b> ${esc(x.text)}</p>`).join('')}
+        ${a.tomorrow ? `<div class="tomorrow"><b>明日预案 · ${esc(a.tomorrow.today.type || '')}</b><p>${esc(a.tomorrow.today.summary)}</p><small>假设今天不再训练；明早按实际状态和日志重新判断。</small></div>` : ''}
+        ${evidence(all)}
+        <p class="muted">置信度 ${a.confidence} · ${esc(a.confidenceText)}</p>
+        <div class="row"><a class="btn pri" href="#training/journal">写今天的日志</a><a class="btn ghost" href="#training/plan">看课表 →</a></div>
+      </section>`;
     }
     function gapCard() {
       const a = advice();
@@ -82,29 +93,53 @@
         ${g.limiters.map(x => `<h4>${x.key} · ${x.level}</h4><p>${esc(x.text)}</p>${evidence(x.reasons)}`).join('')}
       </section>`;
     }
+    // 状况分区：沿用 RQ 公开口径思路（−2~−7 有效训练、<−10 过度疲劳风险、全马赛日 0~+5），阈值为 RW 参考。
+    function tsbZone(t) {
+      if (!Number.isFinite(t)) return { key: 'na', label: '数据不足' };
+      if (t > 5) return { key: 'fresh', label: '充分恢复' };
+      if (t >= 0) return { key: 'race', label: '比赛窗口' };
+      if (t > -2) return { key: 'flat', label: '平衡' };
+      if (t >= -7) return { key: 'train', label: '有效训练' };
+      if (t >= -10) return { key: 'tired', label: '偏疲劳' };
+      return { key: 'over', label: '过度疲劳风险' };
+    }
+    // invert：疲劳下降是好事，颜色反过来。
+    function delta(now, prev, invert = false) {
+      if (!Number.isFinite(now) || !Number.isFinite(prev)) return '<span class="d">较昨日 无数据</span>';
+      const d = +(now - prev).toFixed(1), good = invert ? d < 0 : d > 0;
+      return `<span class="d ${d === 0 ? '' : good ? 'pos' : 'neg'}">较昨日 ${d > 0 ? '+' : ''}${d.toFixed(1)}</span>`;
+    }
     pages.status = () => {
-      const r = R(), t = r.tsb[r.iT], a = advice();
+      const r = R(), i = r.iT, t = r.tsb[i], a = advice(), z = tsbZone(t);
       const bad = a?.today.type === '休息' && a.risks.some(x => x.level === '高' && x.text.includes('就医'));
       const raceDays = RW.diffDays(S().raceDate, r.today);
       const goodBeforeRace = raceDays >= 0 && raceDays <= 21 && t >= 0;
-      const state = bad || t < -10 ? '躺平' : t < -6 ? '疲惫' : t >= 3 || goodBeforeRace ? '奔跑' : '正常';
+      const state = bad || t < -10 ? '恢复' : t < -6 ? '疲劳' : t >= 3 || goodBeforeRace ? '在线' : '稳定';
+      const head = { 在线: '状态在线，按计划推进', 稳定: '状态平稳，照常训练', 疲劳: '有点累，今天收着跑', 恢复: '先恢复，别硬撑' }[state];
       const quote = RWQuotes.forDate(r.today);
-      return `<h2>今天，${state}</h2>
-        <section class="card status-hero">
-          ${RWMascot.svg(state)}
-          <div><h3>${{ 奔跑: '状态在线，按计划推进', 正常: '状态平稳，照常训练', 疲惫: '有点累，今天收着跑', 躺平: '先恢复，别硬撑' }[state]}</h3>
-            <p>依据：今日状况 ${f(t)}（RW 参考区，阈值为 RW 自定）${goodBeforeRace ? '；赛前21天内非负状况视为良好区' : ''}</p>
-            <p>最新活动：${esc(r.segs.at(-1)?.day || '无')} · ${heartSource()}</p>
+      const pos = Number.isFinite(t) ? Math.max(0, Math.min(100, (t + 20) / 30 * 100)) : null;
+      const last = r.segs.at(-1);
+      return `<section class="metrics" aria-label="今日核心指标">
+          <div class="m-top">
+            <div><span class="m-date">${esc(r.today)}</span>${RW.validDate(S().raceDate) && raceDays >= 0 ? `<span class="m-race">${esc(S().raceName || '目标赛')} · 还有 <b>${raceDays}</b> 天</span>` : ''}</div>
+            <span class="m-src">最新活动 ${esc(last?.day || '—')}</span>
           </div>
+          <div class="m-grid">
+            <div class="m vdot"><span class="lab">跑力</span><b class="num">${f(r.curNow)}</b>${delta(r.curNow, r.curAt(i - 1))}</div>
+            <div class="m"><span class="lab">体能 <i>42天</i></span><b class="num">${f(r.ctl[i])}</b>${delta(r.ctl[i], r.ctl[i - 1])}</div>
+            <div class="m"><span class="lab">疲劳 <i>7天</i></span><b class="num">${f(r.atl[i])}</b>${delta(r.atl[i], r.atl[i - 1], true)}</div>
+            <div class="m tsb z-${z.key}"><span class="lab">状况</span><b class="num">${Number.isFinite(t) && t > 0 ? '+' : ''}${f(t)}</b><span class="zone">${z.label}</span>${delta(t, r.tsb[i - 1])}</div>
+          </div>
+          ${pos === null ? '' : `<div class="tsb-scale" aria-hidden="true"><span class="mk" style="left:${pos.toFixed(1)}%"></span></div>
+          <div class="tsb-ticks" aria-hidden="true"><span style="left:0%">−20</span><span style="left:${(10 / 30 * 100).toFixed(1)}%">−10</span><span style="left:${(18 / 30 * 100).toFixed(1)}%">−2</span><span style="left:${(20 / 30 * 100).toFixed(1)}%">0</span><span style="left:${(25 / 30 * 100).toFixed(1)}%">+5</span><span style="left:100%">+10</span></div>`}
+          <p class="m-note">状况 = 昨日体能 − 昨日疲劳 · 跑力为心率-配速近似估算</p>
+        </section>
+        <section class="card runner-card s-${state}">
+          <div class="runner-wrap">${RWMascot.svg(state)}</div>
+          <div class="runner-text"><span class="eyebrow">今天 · ${state}</span><h3>${head}</h3><p>${heartSource()}</p></div>
         </section>
         ${coachCard()}
-        <div class="grid">
-          ${c.kpi('当前跑力', f(r.curNow), '心率-配速近似估算，非实测VDOT')}
-          ${c.kpi('体能', f(r.ctl[r.iT]))}
-          ${c.kpi('疲劳', f(r.atl[r.iT]))}
-          ${c.kpi('状况', f(t), '昨天体能 − 昨天疲劳')}
-        </div>
-        <blockquote>${quote.text}<small>—— ${quote.author}</small></blockquote>
+        <blockquote class="quote">${quote.text}<small>—— ${quote.author}</small></blockquote>
 `;
     };
     const oldLoad = pages.load, oldLoadAfter = pages.load.after;
@@ -133,11 +168,11 @@
       const r = R();
       const rows = RW.ZONES.slice(0, 5).map(z => {
         const samples = r.segs.filter(a => a.hrr != null && a.hrr >= z.lo && a.hrr < (z.code === 'I' ? Infinity : z.hi));
-        return row([z.code, f(samples.reduce((s, a) => s + a.movS / 60, 0))]);
+        return row([`${z.code} · ${z.name}`, RW.fmtHMS(samples.reduce((s, a) => s + a.movS, 0)), String(samples.length)]);
       });
       return `<section class="card">
         <h3>心率区间时长（按整段平均心率归区，非逐秒）</h3>
-        ${table(['心率区', '分钟'], rows)}
+        ${table(['心率区', '时长 时:分:秒', '次数'], rows)}
         <p>低于E及无心率段不列入。</p>
       </section>`;
     }
@@ -154,7 +189,7 @@
       const pbRows = RWAnalysis.personalBests(r.sessions.map(s => ({ ...s.main, id: s.id })), c.races()).map(g => {
         const cells = [0, 1].map(n => {
           const a = g.best[n];
-          return a ? `${a.day} ${RW.fmtT(a.elapsedS || a.timeS || a.movS)} ${a.confirmed ? '★' : ''}` : '—';
+          return a ? `${a.day} ${RW.fmtT(a.elapsedS || a.timeS || a.movS)} ${a.confirmed ? '★' : ''}` : '无记录';
         });
         return row([g.km + 'km', ...cells]);
       });
@@ -212,7 +247,7 @@
       const labels = { longest: '最长距离', fastest: '最快平均配速（≥5km整段）', climb: '最高已知爬升', load: '最大已知负荷' };
       const lines = Object.entries(labels).map(([k, label]) => {
         const a = g.records[k];
-        const value = a ? (k === 'fastest' ? RW.fmtPace(a.movS / a.km) : f(a[k === 'longest' ? 'km' : k === 'climb' ? 'asc' : 'load'])) : '—';
+        const value = a ? (k === 'fastest' ? RW.fmtPace(a.movS / a.km) : f(a[k === 'longest' ? 'km' : k === 'climb' ? 'asc' : 'load'])) : '无';
         return `<p>${label}：${a ? `${a.day} ${esc(a.title)} · ` : ''}${value}</p>`;
       });
       return `<h4>${g.key}</h4>${lines.join('')}`;
@@ -223,14 +258,16 @@
       const years = [...new Set(R().segs.map(x => x.day.slice(0, 4)))].reverse();
       const months = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
       const statsRows = groups.map(g => row([
-        g.key, f(g.vdot), `${f(g.km)} / ${g.count}`, RW.fmtPace(g.pace),
-        g.load === null ? '—（含未知）' : f(g.load), RW.fmtT(g.movS),
-        f(g.hr), f(g.asc), f(g.cad), f(g.stride)
+        g.key, f(g.vdot), `${f(g.km)} / ${g.count}`, RW.fmtPace(g.pace) + '/km',
+        g.load === null ? `${f(g.loadKnown)}<sup>*</sup>` : f(g.load), RW.fmtHMS(g.movS),
+        f(g.hr), g.asc === null ? `${Math.round(g.ascKnown)}<sup>*</sup>` : String(Math.round(g.asc)), f(g.cad), f(g.stride)
       ]));
-      const listRows = acts.slice().reverse().slice((rec.page - 1) * 30, rec.page * 30).map(a => row([
-        `<button class="btn" data-race="${esc(raceId(a))}" aria-label="确认比赛">${c.races()[raceId(a)] === true ? '★' : '☆'}</button>`,
-        `${a.day}<br>${esc(a.title)}`, f(a.km), RW.fmtPace(a.movS / a.km), RW.fmtT(a.movS)
-      ]));
+      const listRows = acts.slice().reverse().slice((rec.page - 1) * 30, rec.page * 30).map(a => {
+        const on = c.races()[raceId(a)] === true;
+        return `<li class="act"><button class="star ${on ? 'on' : ''}" data-race="${esc(raceId(a))}" aria-label="${on ? '取消比赛确认' : '确认为比赛'}">${on ? '★' : '☆'}</button>
+          <div class="act-t"><span class="act-d">${a.day} · ${wd(a.day)}</span><span class="act-n">${esc(a.title)}</span></div>
+          <div class="act-v"><b>${f(a.km)}<small>km</small></b><span>${RW.fmtPace(a.movS / a.km)}/km · ${RW.fmtHMS(a.movS)}</span></div></li>`;
+      });
       return `<h2>记录与统计</h2>
         <section class="card"><div class="form">
           <label class="f">类型<select id="recType">${opt(['跑步', '跑步机'], rec.type)}</select></label>
@@ -241,15 +278,14 @@
             ${['周', '月', '年', '总'].map(x => `<option ${x === rec.period ? 'selected' : ''}>${x}</option>`).join('')}
           </select></label>
         </div>
-        <p>统计针对当前筛选；心率、步频、步长按已知样本时长加权；爬升含未知显示—。</p>
+        <p class="muted">统计针对当前筛选；心率、步频、步长按已知样本时长加权。带 * 的负荷/爬升表示该周期有活动缺少该数据，只合计已知部分。时长为 时:分:秒。</p>
         ${table(['周期', '平均跑力', '公里 / 次数', '平均配速', '负荷', '时长', '心率', '爬升 m', '步频', '步长'], statsRows)}
         <details><summary>各周期个人记录</summary>${groups.map(periodRecords).join('')}</details>
         </section>
         <section class="card">
-          <p>★ 只由你手动确认比赛。共 ${acts.length} 条，第 ${rec.page} 页。</p>
-          <div class="rec-list">${table(['比赛', '日期 / 标题', '距离', '配速', '用时'], listRows)}</div>
-          <button id="prevRecords" class="btn">上一页</button>
-          <button id="nextRecords" class="btn">下一页</button>
+          <div class="coach-head"><h3>活动列表</h3><span class="pill">共 ${acts.length} 条</span></div><p class="muted">☆ 点亮为 ★ 表示你确认这是一场比赛，只有确认的比赛才参与竞赛跑力。</p>
+          <ul class="act-list">${listRows.join('')}</ul>
+          <div class="row pager"><button id="prevRecords" class="btn">上一页</button><span class="muted">第 ${rec.page} / ${Math.max(1, Math.ceil(acts.length / 30))} 页</span><button id="nextRecords" class="btn">下一页</button></div>
         </section>`;
     };
     pages.records.after = () => {
@@ -262,13 +298,18 @@
       const x = journal.entries.find(e => e.date === journalDate) || { restHr: null, weight: null, fatigue: null, feeling: null, pain: false, notes: '' };
       const first = month + '-01', offset = (new Date(first + 'T00:00:00Z').getUTCDay() + 6) % 7;
       const days = new Date(Date.UTC(+month.slice(0, 4), +month.slice(5), 0)).getUTCDate();
+      const today = RW.shanghaiToday(), gdays = new Set((garmin?.items || []).map(x => x.date));
       const cells = Array.from({ length: days }, (_, n) => {
-        const d = RW.addDays(first, n), km = (R()?.segs || []).filter(a => a.day === d).reduce((s, a) => s + a.km, 0);
-        return `<button data-jdate="${d}" class="day ${d === journalDate ? 'selected' : ''}">${n + 1}<small>${f(km)}km</small><small>${journal.entries.some(e => e.date === d) ? '● 日志' : '—'}</small></button>`;
+        const d = RW.addDays(first, n), km = actualKm(d), logged = journal.entries.some(e => e.date === d);
+        // v3 曾在无日志的格子里显示一个裸“—”（含义是“当天未写日志”）；现在改为有内容才显示，用图例说明圆点含义。
+        return `<button data-jdate="${d}" class="day ${d === journalDate ? 'selected' : ''} ${d === today ? 'is-today' : ''} ${km > 0 ? 'ran' : ''}" aria-label="${d}${km > 0 ? ' 跑步 ' + f(km) + ' 公里' : ''}${logged ? ' 已写日志' : ''}${gdays.has(d) ? ' 有 Garmin 课表' : ''}">
+          <span class="dn">${n + 1}</span><span class="dk">${km > 0 ? f(km) : ''}</span>
+          <span class="dots">${logged ? '<i class="j"></i>' : ''}${gdays.has(d) ? '<i class="g"></i>' : ''}</span></button>`;
       }).join('');
       return `${trainingNav()}<h2>每日日志</h2>
         <section class="card">
           <label>月份 <input id="journalMonth" type="month" value="${month}"></label>
+          <div class="cal-legend"><span><b>7.2</b> 当天跑量 km</span><span><i class="j"></i> 已写日志</span><span><i class="g"></i> Garmin 课表</span></div>
           <div class="calendar">
             ${['一', '二', '三', '四', '五', '六', '日'].map(x => `<span>${x}</span>`).join('')}
             ${'<span></span>'.repeat(offset)}${cells}
@@ -293,8 +334,8 @@
             <button class="btn pri">保存当天日志</button>
           </form>
           <p id="journalMsg" role="status">${esc(journalError)}</p>
-          <button id="journalExport" class="btn">导出日志 JSON</button>
-          <label>导入替换（256KB）<input id="journalImport" type="file" accept=".json,application/json"></label>
+          <div class="row tools"><button id="journalExport" class="btn">导出日志 JSON</button>
+          <label class="file-btn ghost">导入日志 JSON（替换）<input id="journalImport" type="file" accept=".json,application/json"></label></div>
         </section>`;
     };
     pages['training/journal'].after = () => {
@@ -319,7 +360,71 @@
         } catch (e) { $('#journalMsg').textContent = e.message + ' 未覆盖原存储。'; }
       };
     };
-    for (const [path, old, nav] of [['training/plan', 'planner', trainingNav], ['tools/calc', 'predict', toolsNav], ['tools/settings', 'settings', toolsNav]]) {
+    // ---------- Garmin 日历课表（本机文件导入，只读展示，与 RW 自建课表并列） ----------
+    let garmin = null, garminMsg = '';
+    try { garmin = RWGarminPlan.load(); } catch (e) { garminMsg = '本机保存的 Garmin 课表无法读取：' + e.message; }
+    const WD = ['日', '一', '二', '三', '四', '五', '六'];
+    const wd = d => '周' + WD[new Date(d + 'T00:00:00Z').getUTCDay()];
+    const md = d => `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
+    function actualKm(d) { return (R()?.segs || []).filter(a => a.day === d).reduce((s, a) => s + a.km, 0); }
+    function garminCard(x, today) {
+      const km = actualKm(x.date), past = x.date < today, isToday = x.date === today;
+      const done = km > 0 ? `<span class="pill good">当天实际 ${f(km)} km</span>` : past ? '<span class="pill">当天无跑步记录</span>' : isToday ? '<span class="pill ok">今天</span>' : '';
+      const steps = x.steps.map((st, i) => `<li><span class="st-n">${i + 1}</span><div><b>${esc(RWGarminPlan.fixTime(st.duration_or_distance) || '—')}</b>${st.target ? `<span>${esc(RWGarminPlan.zh(st.target))}</span>` : ''}</div></li>`).join('');
+      return `<article class="gw ${isToday ? 'today' : ''} ${past ? 'past' : ''}">
+        <div class="gw-date"><b>${md(x.date)}</b><span>${wd(x.date)}</span></div>
+        <div class="gw-body">
+          <div class="gw-title">${esc(x.name)}</div>
+          <div class="gw-meta">${x.total_distance_km != null ? `<span>${f(x.total_distance_km)} km</span>` : ''}${x.total_time ? `<span>${esc(RW.fmtHMS(RW.parseHMS(x.total_time)) !== '—' ? RW.fmtHMS(RW.parseHMS(x.total_time)) : x.total_time)}</span>` : ''}${x.total_distance_km && RW.parseHMS(x.total_time) ? `<span>${RW.fmtPace(RW.parseHMS(x.total_time) / x.total_distance_km)}/km</span>` : ''}${done}</div>
+          ${steps ? `<ol class="gw-steps">${steps}</ol>` : ''}
+          ${x.notes ? `<p class="gw-note">${esc(x.notes)}</p>` : ''}
+        </div>
+      </article>`;
+    }
+    function garminSection() {
+      const today = RW.shanghaiToday(), race = S().raceDate;
+      if (!garmin) return `<section class="card garmin">
+        <div class="coach-head"><h3>Garmin 日历课表</h3><span class="pill">未导入</span></div>
+        <p class="lead">把从 Garmin Connect 日历整理出的 <code>calendar-plan.json</code> 选进来即可显示，文件只保存在这台设备的浏览器里，不上传。</p>
+        <label class="file-btn">选择 calendar-plan.json<input id="garminImport" type="file" accept=".json,application/json"></label>
+        <p id="garminMsg" role="status" class="muted">${esc(garminMsg)}</p>
+      </section>`;
+      const items = garmin.items, upcoming = items.filter(x => x.date >= RW.addDays(today, -7));
+      const lastBeforeRace = items.filter(x => !RW.validDate(race) || x.date <= race).at(-1)?.date;
+      const raceEntry = RW.validDate(race) && items.some(x => x.date === race);
+      const gapList = RW.validDate(race) && race >= today ? RWGarminPlan.gaps(items, today, race) : [];
+      const tail = gapList.find(g => g[1] === race);
+      const inner = gapList.filter(g => g !== tail);
+      const raceDays = RW.diffDays(race, today);
+      const warn = tail ? `<div class="callout bad gap"><b>Garmin 日历从 ${md(tail[0])}（${wd(tail[0])}）到比赛日 ${md(race)} 没有安排任何训练</b>
+          <p>空档 ${RW.diffDays(tail[1], tail[0]) + 1} 天${raceEntry ? '' : '，比赛日当天也没有赛事条目'}。距${esc(S().raceName || '比赛')}还有 ${raceDays} 天，赛前一周的轻松跑、短 M 配速保持课和赛前一天的安排需要补上，可在下方 RW 课表里生成减量草案再自己确认。</p></div>` : '';
+      return `<section class="card garmin">
+        <div class="coach-head"><h3>Garmin 日历课表</h3><span class="pill good">${items.length} 条</span></div>
+        <p class="muted">${esc(garmin.fileName || '本机文件')} · 导入于 ${esc(garmin.importedAt.slice(0, 10))} · 仅存本机浏览器${lastBeforeRace ? ` · 最后一条 ${md(lastBeforeRace)}` : ''}</p>
+        ${warn}
+        <div class="gw-list">${upcoming.map(x => garminCard(x, today)).join('') || '<p class="empty">最近 7 天及以后没有 Garmin 训练。</p>'}</div>
+        ${inner.length ? `<p class="muted">另有未安排日：${inner.map(g => g[0] === g[1] ? md(g[0]) : `${md(g[0])}–${md(g[1])}`).join('、')}（可能是休息日）。</p>` : ''}
+        <div class="row tools"><label class="file-btn">重新导入<input id="garminImport" type="file" accept=".json,application/json"></label><button id="garminClear" class="btn ghost" type="button">移除 Garmin 课表</button></div>
+        <p id="garminMsg" role="status" class="muted">${esc(garminMsg)}</p>
+      </section>`;
+    }
+    function bindGarmin() {
+      const input = $('#garminImport');
+      if (input) input.onchange = async e => {
+        const file = e.target.files[0]; if (!file) return;
+        try {
+          if (file.size > RWGarminPlan.MAX_BYTES) throw Error('文件超过 512KB。');
+          const items = RWGarminPlan.parse(await file.text());
+          garmin = RWGarminPlan.save(items, file.name); garminMsg = `已导入 ${items.length} 条 Garmin 训练。`;
+        } catch (err) { garminMsg = '导入失败：' + err.message + ' 原数据未改动。'; }
+        c.route();
+      };
+      const clear = $('#garminClear');
+      if (clear) clear.onclick = () => { if (!confirm('移除本机保存的 Garmin 课表？')) return; RWGarminPlan.clear(); garmin = null; garminMsg = '已移除。'; c.route(); };
+    }
+    pages['training/plan'] = () => trainingNav() + garminSection() + `<h2 class="sec">RW 自建课表</h2>` + pages.planner();
+    pages['training/plan'].after = () => { bindGarmin(); pages.planner.after?.(); };
+    for (const [path, old, nav] of [['tools/calc', 'predict', toolsNav], ['tools/settings', 'settings', toolsNav]]) {
       pages[path] = () => nav() + (path === 'tools/settings' ? `<section class="card"><p>${heartSource()}</p><button id="clearRestHr" class="btn">清除手动静息心率，改用日志 / 假设值</button></section>` : '') + pages[old]();
       pages[path].after = () => {
         pages[old].after?.();

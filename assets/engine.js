@@ -410,6 +410,8 @@
 
   // ---------- 格式化 ----------
   function fmtT(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
+  // 时长统一为 时:分:秒（h:mm:ss），不足 1 小时也写 0:mm:ss，避免出现“187.5 分钟”。
+  function fmtHMS(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h + ':' + String(m).padStart(2, '0') + ':' + String(x).padStart(2, '0'); }
   function fmtPace(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
   // 从今天早晨开始逐日 EWMA；未知日按 0 仅为下界推演。
@@ -431,5 +433,5 @@
     return n < 0 ? null : n;
   }
 
-  G.RW = { daysToPositive, projectTaper, validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
+  G.RW = { daysToPositive, projectTaper, validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtHMS, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
 })(typeof window !== 'undefined' ? window : globalThis);

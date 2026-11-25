@@ -1,0 +1,5 @@
+[
+{"date":"2026-11-25","name":"示例 轻松跑 6","sport":"running","steps":[{"type":"single","duration_or_distance":"6.00 km (≈34:00)","target":"easy 5:30-6:00/km, conversational"}],"total_distance_km":6.0,"total_time":"0:34:00","notes":"示例备注：腿沉就休。","source":"garmin-calendar"},
+{"date":"2026-11-26","name":"示例 E8","sport":"running","steps":[{"type":"warmup","duration_or_distance":"2.00 km","target":"no target"},{"type":"interval","duration_or_distance":"6.00 km","target":"easy 5:20-5:55/km"}],"total_distance_km":8.0,"total_time":"0:45:00","source":"garmin-calendar"},
+{"date":"2026-11-29","name":"示例 恢复 6","sport":"running","steps":[],"total_distance_km":6.0,"total_time":"0:34:00","notes":"","source":"garmin-calendar"}
+]

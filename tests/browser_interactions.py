@@ -134,6 +134,41 @@ async def main():
     await page.locator('#clearRestHr').click()
     assert '日志中位数 3 条（52）' in await page.locator('#app').inner_text()
     checks.append('日志中位数来源、手动优先与清除手动值')
+    # v4：状态页顺序、依据折叠只出现一次、日历无裸“—”、时长格式、Garmin 日历课表导入
+    await page.goto(URL+'/index.html#status')
+    order=await page.evaluate("""()=>{const kids=[...document.querySelector('#app').children];const i=s=>kids.findIndex(k=>k.matches(s));return [i('.metrics'),i('.runner-card'),i('.coach')]}""")
+    assert order[0]==0 and order[0]<order[1]<order[2],order
+    labels=await page.locator('.metrics .lab').all_inner_texts()
+    assert [x.split()[0] for x in labels]==['跑力','体能','疲劳','状况'],labels
+    assert await page.locator('.coach summary').count()==1
+    checks.append('状态页：指标块→跑者→私教，依据折叠仅一个')
+    await page.goto(URL+'/index.html#training/journal')
+    days=await page.locator('.calendar .day').all_inner_texts()
+    assert all('—' not in d and d.strip()!='-' for d in days)
+    checks.append('训练日历无裸“—”')
+    await page.goto(URL+'/index.html#analysis/fitness')
+    t=await page.locator('#app').inner_text()
+    assert '平均值归区分钟' not in t and '时长 时:分:秒' in t
+    checks.append('强度区间时长为 时:分:秒')
+    real=Path('/workspace/garmin-data/calendar-plan.json')
+    src=real if real.exists() else REPO/'tests/fixtures/calendar-plan.sample.json'
+    await page.goto(URL+'/index.html#training/plan')
+    assert '未导入' in await page.locator('.garmin').inner_text()
+    await page.locator('#garminImport').set_input_files({'name':'bad.json','mimeType':'application/json','buffer':b'{"x":1}'})
+    await page.wait_for_timeout(200)
+    assert '导入失败' in await page.locator('#garminMsg').inner_text()
+    await page.locator('#garminImport').set_input_files(str(src))
+    await page.wait_for_timeout(300)
+    g=await page.locator('.garmin').inner_text()
+    items=json.loads(src.read_text())
+    assert f'{len(items)} 条' in g
+    for x in items:
+      if x.get('notes'): assert x['notes'] in g,(x['notes'],)
+    assert '没有安排任何训练' in g
+    await page.reload()
+    assert f'{len(items)} 条' in await page.locator('.garmin').inner_text()
+    await page.screenshot(path=str(ROOT/'garmin-plan.png'),full_page=True)
+    checks.append(f'Garmin 日历课表导入（{"真实文件" if src==real else "合成样例"} {len(items)} 条）、备注展示、赛前空档提示、刷新持久化')
     await page.goto(URL+'/index.html#overview')
     await page.wait_for_function('location.hash === "#status"')
     await page.goto(URL+'/index.html#planner')
