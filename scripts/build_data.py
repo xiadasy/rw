@@ -10,7 +10,7 @@
 所有跑力、负荷、体能等计算都在浏览器里完成（assets/engine.js），这里只做清洗，
 这样网页内导入 CSV 和本脚本得到的结果完全一致。
 """
-import csv, json, re, sys, os, datetime
+import csv, json, re, sys, os, datetime, math
 
 # 表头别名：中文导出在前，英文导出在后
 ALIASES = {
@@ -33,6 +33,12 @@ ALIASES = {
     'gap': ['平均坡度调整配速', 'Avg GAP'],
     'tss': ['Training Stress Score®'],
     'power': ['平均功率', 'Avg Power'],
+    'maxCad': ['最高步频', '最大步频', 'Max Run Cadence'],
+    'vratio': ['平均垂直步幅比', '平均垂直步幅比 %', 'Avg Vertical Ratio'],
+    'vosc': ['平均垂直摆动', 'Avg Vertical Oscillation'],
+    'maxPower': ['最大功率', 'Max Power'], 'np': ['Normalized Power® (NP®)'],
+    'resp': ['平均呼吸频率', 'Avg Respiration Rate'], 'steps': ['步数', 'Steps'],
+    'minEle': ['最低海拔', 'Min Elevation'], 'maxEle': ['最高海拔', 'Max Elevation'],
     'laps': ['圈数', 'Number of Laps'],
     'moving': ['移动时间', 'Moving Time'],
     'elapsed': ['全程耗时', 'Elapsed Time'],
@@ -48,7 +54,8 @@ def num(v):
     if s in ('', '--', '-'):
         return None
     try:
-        return float(s)
+        n = float(s)
+        return n if math.isfinite(n) else None
     except ValueError:
         return None
 
@@ -60,14 +67,18 @@ def dur(v):
     s = str(v).strip()
     if s in ('', '--'):
         return None
+    if not re.fullmatch(r'\d+(?::\d{1,2})?:\d{2}(?:\.\d+)?', s):
+        return None
     try:
         parts = [float(x) for x in s.split(':')]
     except ValueError:
         return None
+    if parts[-1] >= 60 or (len(parts) == 3 and parts[1] >= 60):
+        return None
     t = 0.0
     for p in parts:
         t = t * 60 + p
-    return t
+    return t if math.isfinite(t) and t > 0 else None
 
 
 def pick(row, key):
@@ -79,10 +90,14 @@ def pick(row, key):
 
 def normalize(row):
     typ = (pick(row, 'type') or '').strip()
-    if not any(w in typ for w in RUN_WORDS):
+    if not re.search(r'跑|run', typ, re.I):
         return None
     start = (pick(row, 'start') or '').strip()
-    if not start:
+    try:
+        day = start[:10]
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day) or datetime.date.fromisoformat(day).year < 100:
+            return None
+    except ValueError:
         return None
     km = num(pick(row, 'km'))
     if km is None or km <= 0:
@@ -118,6 +133,11 @@ def normalize(row):
         'laps': num(pick(row, 'laps')),
         'cal': num(pick(row, 'cal')),
     }
+    for key in ('maxCad', 'vratio', 'vosc', 'maxPower', 'np', 'resp', 'steps', 'minEle', 'maxEle'):
+        a[key] = num(pick(row, key))
+    for key in ('cad', 'stride', 'vratio', 'vosc', 'gct', 'power', 'resp'):
+        if a[key] is not None and a[key] <= 0:
+            a[key] = None
     return a
 
 

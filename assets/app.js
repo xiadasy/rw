@@ -27,6 +27,8 @@
         calibOn: false,
         today: null
     };
+    // v2非默认静息心率迁移为手动值，默认48仍视为假设。
+    if (settings.restHrManual == null) settings.restHrManual = settings.restHr != null && settings.restHr !== 48;
     let raceOverrides = read('rw.races', {}),
         R, charts = [],
         plan, planError = '',
@@ -50,7 +52,7 @@
     }
 
     function recompute() {
-        R = RW.analyze(dataset().activities || [], settings, raceOverrides);
+        R = RW.analyze(dataset().activities || [], views ? views.effectiveSettings() : settings, raceOverrides);
         $('#dataMeta').textContent = `上海日期 ${RW.shanghaiToday()} · ${R ? R.segs.length : 0} 条有效记录 · 仅本机`;
     }
     const note = '<p class="note">来源：Daniels 成绩等效公式与 RW 平均值计点；负荷不是 TRIMP，无性别系数，不代表 RQ 公式。RQ 各版本不同，阈值不可套用。所有数值仅作参考。</p>';
@@ -373,8 +375,18 @@
         });
         $('#generateDraft').onclick = () => {
             try {
-                draft = RWPlan.draft(RW.shanghaiToday(), settings.raceDate);
-                $('#draftPreview').innerHTML = `<div class="callout warn">赛前保守草案：${draft.items.length} 天，仅轻松跑/休息，非 2:45 达标承诺。确认后追加为「未确认」，已有同日计划不重复添加。${table(['日期', '类型', '计划公里'], draft.items.map(x => row([x.date, x.type, f(x.km)])))}<button id="confirmDraft" class="btn pri" type="button">确认并保存草案</button> <button id="cancelDraft" class="btn" type="button">取消草案</button></div>`;
+                draft = RWPlan.draft(RW.shanghaiToday(), settings.raceDate, views.baseKm(), views.paces());
+                const previewRows = draft.items.map(x => row([
+                    x.date, esc(x.type + ' · ' + x.structure + ' · ' + x.goal), f(x.km)
+                ]));
+                $('#draftPreview').innerHTML = `<div class="callout warn">
+                    <h3>${esc(settings.raceName)} ${esc(settings.raceDate)} 减量期草案</h3>
+                    <p>赛前 ${draft.items.length} 天，包含少量M配速和短促加速，非 2:45 达标承诺。
+                    确认后追加为「未确认」，已有同日计划不重复添加。</p>
+                    ${table(['日期', '类型 / 结构 / 目标配速区', '计划公里'], previewRows)}
+                    <button id="confirmDraft" class="btn pri" type="button">确认并保存草案</button>
+                    <button id="cancelDraft" class="btn" type="button">取消草案</button>
+                </div>`;
                 $('#cancelDraft').onclick = () => {
                     draft = null;
                     $('#draftPreview').innerHTML = '';
@@ -426,7 +438,7 @@
             }
         };
     };
-    pages.settings = () => `<h2>本机设置</h2><p class="lead">所有持久化仅当前浏览器。没有后端，不上传数据；浏览器清理可能导致数据丢失。</p><section class="card"><h3>心率与目标</h3><form id="settingsForm" class="form">${field('restHr', '静息心率（默认48为假设）', settings.restHr, 'number')}${field('maxHr', '最大心率（空则取历史99分位）', settings.maxHr ?? '', 'number')}${field('lthr', '阈值心率（可空）', settings.lthr ?? '', 'number')}${field('raceName', '比赛名称', settings.raceName)}${field('raceDate', '比赛日期', settings.raceDate, 'date')}<label class="f">比赛距离<select name="raceDist">${[[5000, '5公里'], [10000, '10公里'], [21097.5, '半马'], [42195, '全马']].map(([v, n]) => `<option value="${v}" ${+settings.raceDist === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${field('goal', '目标时间', settings.goal)}${field('pb', '个人最佳时间', settings.pb)}<button class="btn pri">保存设置</button></form><p id="settingsMsg" role="status"></p></section><section class="card"><h3>真实记录数据</h3><p class="note">Garmin CSV 本地导入；不修改仓库原数据。可合并或替换当前浏览器副本。</p><div class="row"><input id="csvFile" type="file" accept=".csv,text/csv"><select id="csvMode"><option value="merge">合并</option><option value="replace">替换</option></select><button id="csvGo" class="btn">导入 CSV</button><button id="csvReset" class="btn">恢复内置数据</button><button id="activitiesExport" class="btn">导出活动 JSON</button></div><p id="csvMsg" role="status"></p>${note}</section>`;
+    pages.settings = () => `<h2>本机设置</h2><p class="lead">所有持久化仅当前浏览器。没有后端，不上传数据；浏览器清理可能导致数据丢失。</p><section class="card"><h3>心率与目标</h3><form id="settingsForm" class="form">${field('restHr', '静息心率（默认48为假设）', settings.restHr, 'number')}<label><input name="restHrManual" type="checkbox" ${settings.restHrManual ? 'checked' : ''}>使用手动静息心率（勾选后覆盖日志）</label>${field('maxHr', '最大心率（空则取历史99分位）', settings.maxHr ?? '', 'number')}${field('lthr', '阈值心率（可空）', settings.lthr ?? '', 'number')}${field('raceName', '比赛名称', settings.raceName)}${field('raceDate', '比赛日期', settings.raceDate, 'date')}<label class="f">比赛距离<select name="raceDist">${[[5000, '5公里'], [10000, '10公里'], [21097.5, '半马'], [42195, '全马']].map(([v, n]) => `<option value="${v}" ${+settings.raceDist === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label>${field('goal', '目标时间', settings.goal)}${field('pb', '个人最佳时间', settings.pb)}<button class="btn pri">保存设置</button></form><p id="settingsMsg" role="status"></p></section><section class="card"><h3>真实记录数据</h3><p class="note">Garmin CSV 本地导入；不修改仓库原数据。可合并或替换当前浏览器副本。</p><div class="row"><input id="csvFile" type="file" accept=".csv,text/csv"><select id="csvMode"><option value="merge">合并</option><option value="replace">替换</option></select><button id="csvGo" class="btn">导入 CSV</button><button id="csvReset" class="btn">恢复内置数据</button><button id="activitiesExport" class="btn">导出活动 JSON</button></div><p id="csvMsg" role="status"></p>${note}</section>`;
     pages.settings.after = () => {
         $('#settingsForm').onsubmit = e => {
             e.preventDefault();
@@ -434,10 +446,11 @@
                 const d = Object.fromEntries(new FormData(e.target));
                 if (!RW.validDate(d.raceDate) || !RW.parseHMS(d.goal) || !RW.parseHMS(d.pb)) throw Error('请检查比赛日期、目标和个人最佳时间。');
                 for (const k of ['restHr', 'maxHr', 'lthr', 'raceDist']) d[k] = d[k] === '' ? null : Number(d[k]);
-                if (!(d.restHr >= 30 && d.restHr <= 100) || (d.maxHr != null && !(d.maxHr > d.restHr && d.maxHr <= 240)) || (d.lthr != null && !(d.lthr > d.restHr && d.lthr <= 240))) throw Error('请检查心率范围。');
+                if (!(d.restHr >= 30 && d.restHr <= 100 && Number.isInteger(d.restHr)) || (d.maxHr != null && !(d.maxHr > d.restHr && d.maxHr <= 240)) || (d.lthr != null && !(d.lthr > d.restHr && d.lthr <= 240))) throw Error('请检查心率范围。');
                 const next = {
                     ...settings,
                     ...d,
+                    restHrManual: d.restHrManual === 'on',
                     calib: 0,
                     calibOn: false,
                     today: null
@@ -486,12 +499,21 @@
         $('#activitiesExport').onclick = () => download('rw-activities.json', dataset());
     };
 
+    const views = RWViews.install({ pages, esc, f, table, row, chart, field, kpi, download,
+        result: () => R, settings: () => settings, races: () => raceOverrides, refresh: recompute, route });
+    const redirects = {
+        overview: 'status', load: 'analysis/fitness', volume: 'analysis/fitness', zones: 'analysis/fitness',
+        vdot: 'analysis/vdot', paces: 'analysis/vdot', predict: 'tools/calc', planner: 'training/plan', settings: 'tools/settings',
+        analysis: 'analysis/fitness', training: 'training/journal', tools: 'tools/calc'
+    };
     function route() {
         charts.splice(0).forEach(c => c.destroy());
-        let t = location.hash.slice(1) || 'overview';
-        if (!pages[t]) t = 'overview';
-        document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.t === t));
-        if (!R && !['settings', 'planner', 'predict'].includes(t)) {
+        let t = location.hash.slice(1) || 'status';
+        t = redirects[t] || t;
+        if (!pages[t]) t = 'status';
+        if (location.hash !== '#' + t) history.replaceState(null, '', '#' + t);
+        document.querySelectorAll('#tabs a').forEach(a => a.classList.toggle('on', a.dataset.t === t.split('/')[0]));
+        if (!R && !['tools/settings', 'training/plan', 'training/journal', 'tools/calc'].includes(t)) {
             $('#app').innerHTML = '<section class="card"><h2>还没有有效活动</h2><p>未来或非法日期记录不参与分析。仍可使用计算器、课表与设置。</p><a href="#settings">导入数据</a> · <a href="#planner">训练课表</a> · <a href="#predict">计算器</a></section>';
             return;
         }

@@ -13,7 +13,8 @@ async def main():
     page=await context.new_page()
     errors=[]
     page.on('pageerror',lambda e:errors.append(str(e)))
-    await page.goto(URL+'/index.html#predict')
+    await page.clock.install(time=__import__('datetime').datetime(2026,11,25,8,0,tzinfo=__import__('datetime').timezone.utc))
+    await page.goto(URL+'/index.html#tools/calc')
     assert '1:45:46' in await page.locator('#equivOut').inner_text()
     checks.append('默认5公里23分钟→半马1:45:46')
     await page.locator('#equivForm [name=mode]').select_option('vo2max')
@@ -36,7 +37,7 @@ async def main():
     await page.locator('#marathonForm button').click()
     assert '2:48:47' in await page.locator('#marathonOut').inner_text()
     checks.append('马拉松目标/配速双向与终点分段')
-    await page.goto(URL+'/index.html#planner')
+    await page.goto(URL+'/index.html#training/plan')
     assert await page.evaluate('localStorage.getItem("rw.plan.v1")') is None
     await page.locator('#planForm [name=structure]').fill('轻松跑，按体感')
     await page.locator('#planForm [name=km]').fill('6')
@@ -77,7 +78,7 @@ async def main():
     await page.locator('#confirmDraft').click()
     assert len(json.loads(await page.evaluate('localStorage.getItem("rw.plan.v1")'))['items'])==size
     checks.append('减量草案先预览、确认后保存、重复生成不重复同日课表')
-    await page.goto(URL+'/index.html#settings')
+    await page.goto(URL+'/index.html#tools/settings')
     csv='活动类型,日期,标题,距离,时间,移动时间,平均心率,最大心率\n跑步,2026-11-24 07:00:00,测试,0.92,00:07:26.9,00:07:26.9,140,185\n'
     await page.locator('#csvMode').select_option('replace')
     await page.locator('#csvFile').set_input_files({'name':'fixture.csv','mimeType':'text/csv','buffer':csv.encode('utf-8')})
@@ -87,7 +88,7 @@ async def main():
     assert len(imported['activities'])==1
     assert imported['activities'][0]['movS']==446.9
     checks.append('Garmin小数秒CSV本地导入（合成用例）')
-    await page.goto(URL+'/index.html#load')
+    await page.goto(URL+'/index.html#analysis/fitness')
     assert await page.locator('#taperChart').count()==1
     before=await page.locator('.scenario-result').inner_text()
     await page.locator('#taperPct').select_option('0')
@@ -95,11 +96,49 @@ async def main():
     assert await page.locator('.scenario-result').inner_text()!=before
     checks.append('减量模拟比例调整可重算，不写入课表')
     await page.goto(URL+'/index.html#records')
-    await page.locator('#recordSearch').fill('不存在的训练标题')
-    assert '0 次训练' in await page.locator('#recordResults').inner_text()
-    await page.locator('#recordSearch').fill('测试')
-    assert '1 次训练' in await page.locator('#recordResults').inner_text()
-    checks.append('记录搜索实时筛选')
+    await page.locator('#recSearch').fill('不存在的训练标题')
+    await page.locator('#recSearch').press('Tab')
+    assert '共 0 条' in await page.locator('#app').inner_text()
+    await page.locator('#recSearch').fill('测试')
+    await page.locator('#recSearch').press('Tab')
+    assert '共 1 条' in await page.locator('#app').inner_text()
+    await page.locator('[data-race]').first.click()
+    assert '★' in await page.locator('[data-race]').first.inner_text()
+    checks.append('记录搜索筛选、手动确认比赛')
+    await page.goto(URL+'/index.html#training/journal')
+    await page.locator('#journalForm [name=restHr]').fill('51')
+    await page.locator('#journalForm [name=weight]').fill('61.2')
+    await page.locator('#journalForm [name=pain]').check()
+    await page.locator('#journalForm button').click()
+    journal=json.loads(await page.evaluate('localStorage.getItem("rw.journal.v1")'))
+    assert journal['entries'][0]['pain'] is True
+    await page.reload()
+    assert await page.locator('#journalForm [name=restHr]').input_value()=='51'
+    await page.locator('#journalImport').set_input_files({'name':'bad.json','mimeType':'application/json','buffer':b'{"version":2,"entries":[]}'})
+    await page.wait_for_timeout(200)
+    assert json.loads(await page.evaluate('localStorage.getItem("rw.journal.v1")'))==journal
+    await page.goto(URL+'/index.html#status')
+    assert '就医' in await page.locator('.coach').inner_text()
+    await page.screenshot(path=str(ROOT/'journal-safety.png'),full_page=True)
+    checks.append('日志保存、刷新、非法导入不覆盖、病痛安全优先')
+    entries=[dict(journal['entries'][0],date=d,restHr=h,pain=False) for d,h in [('2026-11-23',50),('2026-11-24',52),('2026-11-25',54)]]
+    await page.goto(URL+'/index.html#training/journal')
+    await page.locator('#journalImport').set_input_files({'name':'valid.json','mimeType':'application/json','buffer':json.dumps({'version':1,'entries':entries}).encode()})
+    await page.wait_for_timeout(200)
+    await page.goto(URL+'/index.html#tools/settings')
+    assert '日志中位数 3 条（52）' in await page.locator('#app').inner_text()
+    await page.locator('#settingsForm [name=restHr]').fill('49')
+    await page.locator('#settingsForm [name=restHrManual]').check()
+    await page.locator('#settingsForm button').click()
+    assert '静息心率来源：手动 49' in await page.locator('#app').inner_text()
+    await page.locator('#clearRestHr').click()
+    assert '日志中位数 3 条（52）' in await page.locator('#app').inner_text()
+    checks.append('日志中位数来源、手动优先与清除手动值')
+    await page.goto(URL+'/index.html#overview')
+    await page.wait_for_function('location.hash === "#status"')
+    await page.goto(URL+'/index.html#planner')
+    await page.wait_for_function('location.hash === "#training/plan"')
+    checks.append('旧hash自动重定向')
     assert not errors, errors
     await b.close()
   (ROOT/'interaction-report.json').write_text(json.dumps({'checks':checks,'errors':errors},ensure_ascii=False,indent=2))

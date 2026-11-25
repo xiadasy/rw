@@ -13,6 +13,12 @@
     asc: ['累计爬升', 'Total Ascent'], desc: ['累计下降', 'Total Descent'], stride: ['平均步长', 'Avg Stride Length'],
     gct: ['平均触地时间', 'Avg Ground Contact Time'], gap: ['平均坡度调整配速', 'Avg GAP'],
     tss: ['Training Stress Score®'], power: ['平均功率', 'Avg Power'], laps: ['圈数', 'Number of Laps'],
+    maxCad: ['最高步频', '最大步频', 'Max Run Cadence'],
+    vratio: ['平均垂直步幅比', '平均垂直步幅比 %', 'Avg Vertical Ratio'],
+    vosc: ['平均垂直摆动', 'Avg Vertical Oscillation'],
+    maxPower: ['最大功率', 'Max Power'], np: ['Normalized Power® (NP®)'],
+    resp: ['平均呼吸频率', 'Avg Respiration Rate'], steps: ['步数', 'Steps'],
+    minEle: ['最低海拔', 'Min Elevation'], maxEle: ['最高海拔', 'Max Elevation'],
     moving: ['移动时间', 'Moving Time'], elapsed: ['全程耗时', 'Elapsed Time']
   };
 
@@ -59,13 +65,17 @@
     const km = num(pick(r, 'km')); if (!km || km <= 0) return null;
     const timeS = dur(pick(r, 'time')); const movS = dur(pick(r, 'moving')) || timeS;
     if (!movS) return null;
+    const dynamics = k => { const n = num(pick(r, k)); return n > 0 ? n : null; };
     return {
+      maxCad: num(pick(r, 'maxCad')), vratio: dynamics('vratio'), vosc: dynamics('vosc'),
+      maxPower: num(pick(r, 'maxPower')), np: num(pick(r, 'np')), resp: dynamics('resp'),
+      steps: num(pick(r, 'steps')), minEle: num(pick(r, 'minEle')), maxEle: num(pick(r, 'maxEle')),
       id: start, type, start, day: start.slice(0, 10), title: String(pick(r, 'title') || '').trim(),
       km: Math.round(km * 1000) / 1000, timeS, movS, elapsedS: dur(pick(r, 'elapsed')) || timeS,
-      hr: num(pick(r, 'hr')), maxHr: num(pick(r, 'maxHr')), te: num(pick(r, 'te')), cad: num(pick(r, 'cad')),
+      hr: num(pick(r, 'hr')), maxHr: num(pick(r, 'maxHr')), te: num(pick(r, 'te')), cad: dynamics('cad'),
       paceS: dur(pick(r, 'pace')), bestPaceS: dur(pick(r, 'bestPace')), asc: num(pick(r, 'asc')), desc: num(pick(r, 'desc')),
-      stride: num(pick(r, 'stride')), gct: num(pick(r, 'gct')), gapS: dur(pick(r, 'gap')), tss: num(pick(r, 'tss')),
-      power: num(pick(r, 'power')), laps: num(pick(r, 'laps')), cal: num(pick(r, 'cal'))
+      stride: dynamics('stride'), gct: dynamics('gct'), gapS: dur(pick(r, 'gap')), tss: num(pick(r, 'tss')),
+      power: dynamics('power'), laps: num(pick(r, 'laps')), cal: num(pick(r, 'cal'))
     };
   }
   function activitiesFromCSV(text) {
@@ -402,5 +412,24 @@
   function fmtT(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
   function fmtPace(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
-  G.RW = { validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
+  // 从今天早晨开始逐日 EWMA；未知日按 0 仅为下界推演。
+  function projectTaper(R, factor = 0.6, days = 60) {
+    if (!R || !Number.isFinite(factor) || factor < 0 || !Number.isInteger(days) || days < 0) return [];
+    const i = R.iT;
+    let c = i > 0 ? R.ctl[i - 1] : 0, a = i > 0 ? R.atl[i - 1] : 0;
+    const base = R.load.slice(Math.max(0, i - 28), i).reduce((s, x) => s + (x ?? 0), 0) / 28;
+    const out = [];
+    for (let d = 0; d <= days; d++) {
+      out.push({ day: R.today ? addDays(R.today, d) : null, tsb: c - a, ctl: c, atl: a });
+      c += (base * factor - c) / 42;
+      a += (base * factor - a) / 7;
+    }
+    return out;
+  }
+  function daysToPositive(R, factor = 0.6, maxDays = 60) {
+    const n = projectTaper(R, factor, maxDays).findIndex(x => x.tsb >= 0);
+    return n < 0 ? null : n;
+  }
+
+  G.RW = { daysToPositive, projectTaper, validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
 })(typeof window !== 'undefined' ? window : globalThis);

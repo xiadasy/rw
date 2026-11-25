@@ -15,17 +15,17 @@ async def main():
       page.on('pageerror',lambda e:report['errors'].append(str(e)))
       await page.goto(URL+'/index.html')
       await page.wait_for_timeout(500)
-      routes=await page.locator('#tabs a').evaluate_all('(els)=>els.map(e=>e.hash)')
+      routes=['#status','#analysis','#analysis/fitness','#analysis/vdot','#analysis/tech','#records','#training','#training/journal','#training/plan','#tools','#tools/calc','#tools/settings']
       assert '#method' not in routes,'方法仍在主导航'
       for route in routes:
         await page.evaluate('(r)=>location.hash=r',route)
         await page.wait_for_timeout(400)
         text=await page.locator('#app').inner_text()
         assert len(text)>20,(name,route,'empty')
-        assert 'NaN' not in text and 'Infinity' not in text,(name,route,'bad number')
+        assert all(x not in text for x in ['NaN','undefined','Infinity']),(name,route,'bad number')
         overflow=await page.evaluate('document.documentElement.scrollWidth>innerWidth+1')
         if overflow:report['errors'].append(f'{name} {route} horizontal overflow')
-        await page.screenshot(path=str(ROOT/f'{name}-{route[1:]}.png'),full_page=True)
+        await page.screenshot(path=str(ROOT/f'{name}-{route[1:].replace("/","-")}.png'),full_page=True)
         report['routes'].append({'viewport':name,'route':route,'characters':len(text),'overflow':overflow})
       await context.close()
     # Fresh file:// load without server

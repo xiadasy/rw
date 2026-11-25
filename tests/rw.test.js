@@ -115,11 +115,12 @@ test('课表本地默认空、保存/导入往返、实际活动不改变状态'
   assert.equal(weeks[0].km, 5); assert.equal(weeks[0].actualKm, 5); assert.equal(weeks[0].counts['未确认'], 1); assert.equal(doc.items[0].status, '未确认');
   assert.throws(() => P.load({ getItem: () => 'bad json' }));
 });
-test('赛前减量草案仅未来21天、轻松跑休息、未确认', () => {
+test('赛前减量草案仅21天内、包含保持课、未确认', () => {
   const r = P.draft('2026-11-25', '2026-12-06'); P.validate(r);
-  assert.equal(r.items.length, 10);
-  for (const x of r.items) { assert.ok(x.date > '2026-11-25' && x.date < '2026-12-06'); assert.ok(['轻松跑', '休息'].includes(x.type)); assert.equal(x.status, '未确认'); }
-  assert.equal(P.draft('2026-11-25', '2026-11-26').items.length, 0);
+  assert.equal(r.items.length, 11);
+  for (const x of r.items) { assert.ok(x.date >= '2026-11-25' && x.date < '2026-12-06'); assert.ok(['轻松跑', '休息', '节奏跑'].includes(x.type)); assert.equal(x.status, '未确认'); }
+  assert.ok(r.items.some(x => x.structure.includes('M配速')));
+  assert.equal(P.draft('2026-11-25', '2026-11-26').items[0].km, 4);
   for (const date of ['2026-11-25', '2026-11-24', '2026-12-17', 'bad']) assert.throws(() => P.draft('2026-11-25', date));
 });
 

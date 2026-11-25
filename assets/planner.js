@@ -64,24 +64,27 @@
         return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     }
 
-    function draft(today, raceDate) {
+    function draft(today, raceDate, baseKm = 50, paces = {}) {
         if (!G.RW.validDate(today) || !G.RW.validDate(raceDate)) throw Error('请先设置有效比赛日期。');
         const n = G.RW.diffDays(raceDate, today);
         if (n < 1 || n > 21) throw Error('仅能为未来 21 天内的比赛生成草案。');
         return {
             version: 1,
             items: Array.from({
-                length: n - 1
+                length: n
             }, (_, i) => {
-                const remaining = n - i - 1,
-                    rest = remaining <= 1 || i % 3 === 2;
+                const remaining = n - i;
+                const rest = remaining % 7 === 2 || remaining % 7 === 6 || (remaining === 1 && baseKm < 30);
+                const marathon = [18, 11, 5].includes(remaining);
+                const factor = remaining > 14 ? 0.775 : remaining > 7 ? 0.6 : 0.4;
+                const km = rest ? 0 : remaining === 1 ? 4 : Math.round(Math.max(0, baseKm) * factor / 5 * 10) / 10;
                 return {
                     id: id(),
-                    date: G.RW.addDays(today, i + 1),
-                    type: rest ? '休息' : '轻松跑',
-                    structure: rest ? '休息，按体感调整。' : '可交谈强度，不加速；不适即停止，可改休息。',
-                    km: rest ? 0 : remaining > 7 ? 5 : 3,
-                    goal: '保守减量草案，非 2:45 达标承诺',
+                    date: G.RW.addDays(today, i),
+                    type: rest ? '休息' : marathon ? '节奏跑' : '轻松跑',
+                    structure: rest ? '休息，按体感调整。' : remaining === 1 ? '赛前一天：4km轻松+4×20秒放松加速，或休息。' : marathon ? 'E热身、少量M配速（全程不超过计划公里的一半，最多2×2km，组间慢跑）、E放松。' : 'E轻松跑，可交谈强度；可加4×20秒放松加速，不适即停止。',
+                    km,
+                    goal: `E ${paces.E || '按可交谈体感'}${marathon ? '；M ' + (paces.M || '按当前跑力而非目标成绩') : ''}；草案，按体感调整，非 2:45 达标承诺`,
                     status: '未确认',
                     rpe: null,
                     feedback: ''
