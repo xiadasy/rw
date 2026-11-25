@@ -98,7 +98,7 @@
       phase, today,
       gap: { goalVdot, curVdot: i.curVdot ?? null, diff: Number.isFinite(i.curVdot) && goalVdot !== null ? goalVdot - i.curVdot : null,
         goalPace, predicted: W.raceTime(i.curVdot, i.raceDist), pbVdot: W.vdot(i.raceDist, i.pbS), limiters,
-        note: `当前跑力为心率近似，可能偏低或偏高。${days !== null && days >= 0 && days <= 21 ? '现在补短板来不及，以保持状态和恢复为主，短板留到赛后周期。' : '循序渐进，不以模型替代身体感受。'}` },
+        note: `当前跑力按近期活动成绩换算；训练未必全力，预测仅供参考。${days !== null && days >= 0 && days <= 21 ? '现在补短板来不及，以保持状态和恢复为主，短板留到赛后周期。' : '循序渐进，不以模型替代身体感受。'}` },
       risks, confidence, confidenceText: missing.length ? `数据不足，建议偏保守：${missing.join('；')}。` : '活动和今昨自评可用；仍是平均值近似，非医学判断。'
     };
   }

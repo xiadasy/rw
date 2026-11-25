@@ -5,7 +5,9 @@ require('../assets/engine.js'); require('../assets/analysis.js'); require('../as
 const W = globalThis.RW, A = globalThis.RWAnalysis, P = globalThis.RWPlan;
 test('新增数据字段存在，Python/JS字段与动态0缺失一致，小数秒一致', () => {
   const fields = ['maxCad', 'vratio', 'vosc', 'gct', 'stride', 'power', 'maxPower', 'np', 'resp', 'steps', 'minEle', 'maxEle', 'desc'];
-  const data = require('../data/activities.json'); assert.equal(data.activities.length, 460);
+  const data = require('../data/activities.json'); assert.ok(data.activities.length > 0); assert.equal(data.activities.length, data.meta.count);
+  const ctx = {window:{}}; require('node:vm').runInNewContext(require('node:fs').readFileSync(require.resolve('../data/activities.js'),'utf8'), ctx);
+  assert.deepEqual(structuredClone(ctx.window.RW_DATA), data);
   for (const a of data.activities) for (const key of fields) assert.ok(key in a);
   const r = { '活动类型': '跑步', '日期': '2026-11-25 07:00:00', '距离': '5', '时间': '00:25:00.5', '平均步频': '0', '平均垂直步幅比': '--', '平均垂直摆动': '0', '平均步长': '0', '平均触地时间': '0', '平均功率': '0', '平均呼吸频率': '0' };
   const js = W.normalizeRow(r);

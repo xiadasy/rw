@@ -88,7 +88,7 @@
       const g = a.gap;
       return `<section class="card">
         <h3>目标差距与短板</h3>
-        <p>目标 VDOT ${f(g.goalVdot)} · 当前 ${f(g.curVdot)} · 差值 ${f(g.diff)} · PB 对应 ${f(g.pbVdot)}</p>
+        <p>目标 VDOT ${f(g.goalVdot)} · 当前 ${f(g.curVdot)} · 差值 ${f(g.diff)}</p>
         <p>${esc(g.note)}</p>
         ${g.limiters.map(x => `<h4>${x.key} · ${x.level}</h4><p>${esc(x.text)}</p>${evidence(x.reasons)}`).join('')}
       </section>`;
@@ -118,7 +118,7 @@
       const head = { 在线: '状态在线，按计划推进', 稳定: '状态平稳，照常训练', 疲劳: '有点累，今天收着跑', 恢复: '先恢复，别硬撑' }[state];
       const quote = RWQuotes.forDate(r.today);
       const pos = Number.isFinite(t) ? Math.max(0, Math.min(100, (t + 20) / 30 * 100)) : null;
-      const last = r.segs.at(-1);
+      const last = r.segs.at(-1), weeks = RW.completeWeeks(r.segs, r.today);
       return `<section class="metrics" aria-label="今日核心指标">
           <div class="m-top">
             <div><span class="m-date">${esc(r.today)}</span>${RW.validDate(S().raceDate) && raceDays >= 0 ? `<span class="m-race">${esc(S().raceName || '目标赛')} · 还有 <b>${raceDays}</b> 天</span>` : ''}</div>
@@ -132,8 +132,13 @@
           </div>
           ${pos === null ? '' : `<div class="tsb-scale" aria-hidden="true"><span class="mk" style="left:${pos.toFixed(1)}%"></span></div>
           <div class="tsb-ticks" aria-hidden="true"><span style="left:0%">−20</span><span style="left:${(10 / 30 * 100).toFixed(1)}%">−10</span><span style="left:${(18 / 30 * 100).toFixed(1)}%">−2</span><span style="left:${(20 / 30 * 100).toFixed(1)}%">0</span><span style="left:${(25 / 30 * 100).toFixed(1)}%">+5</span><span style="left:100%">+10</span></div>`}
-          <p class="m-note">状况 = 昨日体能 − 昨日疲劳 · 跑力为心率-配速近似估算</p>
+          <p class="m-note">状况 = 昨日体能 − 昨日疲劳 · 跑力为近 42 天 Daniels 成绩等效</p>
         </section>
+        <section class="card"><h3>最新跑步</h3><p>${esc(last.start.slice(0,16))} · ${esc(last.title)}</p><strong>${last.km.toFixed(3)} km</strong> · 移动 ${RW.fmtHMS(last.movS)} · ${RW.fmtPace(last.paceS)}/km
+          <p><a class="btn" id="latestJournal" href="#training/journal">查看当天日志 →</a></p>
+          <h3>最近 4 个完整周</h3><p>${weeks.start} 至 ${weeks.end} · 不含本周</p>
+          <strong>周均 ${f(weeks.km)} km</strong> · 周均负荷 ${f(weeks.load)}
+          <p class="muted">${!weeks.covered ? '活动历史不足四整周，暂不估算。' : `按已记录活动合计除以 4；无记录日计 0，不代表一定休息。${weeks.unknown ? `有 ${weeks.unknown} 条负荷未知，不计算周均负荷。` : ''}`}</p><a href="#analysis/fitness">查看体能趋势 →</a></section>
         <section class="card runner-card s-${state}">
           <div class="runner-wrap">${RWMascot.svg(state)}</div>
           <div class="runner-text"><span class="eyebrow">今天 · ${state}</span><h3>${head}</h3><p>${heartSource()}</p></div>
@@ -142,6 +147,7 @@
         <blockquote class="quote">${quote.text}<small>—— ${quote.author}</small></blockquote>
 `;
     };
+    pages.status.after = () => { $('#latestJournal').onclick = () => { journalDate = R().segs.at(-1).day; month = journalDate.slice(0,7); }; };
     const oldLoad = pages.load, oldLoadAfter = pages.load.after;
     pages['analysis/fitness'] = () => {
       const r = R(), n = RW.daysToPositive(r, factor, 60);
@@ -151,9 +157,9 @@
       const raceMorning = raceDays >= 0 ? RW.projectTaper(r, factor, raceDays).at(-1)?.tsb : null;
       return `${analysisNav()}<h2>体能与恢复</h2>
         <section class="card">
-          <div class="row">${[30, 90, 180].map(n => `<button class="btn" data-days="${n}">${n}天</button>`).join('')}</div>
+          <div class="row">${[30, 90, 180].map(n => `<button class="btn" aria-pressed="${n === fitnessDays}" data-days="${n}">${n}天</button>`).join('')}</div>
           <div class="chart"><canvas id="fitnessTrend"></canvas></div>
-          <p>近四周周均 ${f(recent.reduce((s, x) => s + x.km, 0) / 4)} km · 周均负荷 ${totalLoad}</p>
+          <p>滚动近 28 天折合周均 ${f(recent.reduce((s, x) => s + x.km, 0) / 4)} km · 周均负荷 ${totalLoad}</p>
         </section>
         <section class="card"><h3>减量回正推演</h3>
           <label>近28天日均负荷比例 <select id="positiveFactor">
@@ -185,32 +191,30 @@
     };
     pages['analysis/vdot'] = () => {
       const r = R();
-      const delta = n => r.curNow != null && r.curAt(Math.max(0, r.iT - n)) != null ? r.curNow - r.curAt(Math.max(0, r.iT - n)) : null;
-      const pbRows = RWAnalysis.personalBests(r.sessions.map(s => ({ ...s.main, id: s.id })), c.races()).map(g => {
-        const cells = [0, 1].map(n => {
-          const a = g.best[n];
-          return a ? `${a.day} ${RW.fmtT(a.elapsedS || a.timeS || a.movS)} ${a.confirmed ? '★' : ''}` : '无记录';
-        });
-        return row([g.km + 'km', ...cells]);
-      });
+      const delta = n => r.curNow != null && r.curAt(r.iT - n) != null ? r.curNow - r.curAt(r.iT - n) : null;
+      const races = c.races();
+      const confirmed = r.sessions.filter(x => races[x.id] === true).map(x => ({ ...x.main, id:x.id }));
+      const pbRows = [['1.6 公里','--','--'], ['3 公里','--','--'], ...RWAnalysis.personalBests(confirmed, races).map(g => [g.km+' km', ...[0,1].map(i => { const x=g.best[i]; return x ? `${x.day} ${RW.fmtT(x.elapsedS || x.timeS || x.movS)}` : '--'; })])].map(row);
+      const e = r.recent, best = e.best;
       const predictions = [5000, 10000, 21097.5, 42195].map(d => row([d / 1000 + 'km', RW.fmtT(RW.raceTime(r.curNow, d))]));
       return `${analysisNav()}<h2>跑力 · ${f(r.curNow)}</h2>
-        <p>心率-配速近似估算；30天变化 ${f(delta(30))} · 90天变化 ${f(delta(90))}</p>
+        <p>42 天 Daniels 成绩等效；30天变化 ${f(delta(30))} · 90天变化 ${f(delta(90))}</p>
+        <details class="card"><summary>查看估算依据 · ${e.count} 次有效训练</summary><p>${e.start} 至 ${e.end}（含首尾）。取主段至少 3 公里的有效户外跑；优先选已确认比赛中的最高等效，否则取训练中的最高等效。不使用历史 PB。</p><p>${best ? `${esc(best.day)} · ${esc(best.title)} · ${f(best.km)} km · ${RW.fmtT(best.seconds)} · ${best.race ? '已确认比赛' : '训练表现，非全力测试'}` : '没有合格样本，不沿用过期跑力。'}</p></details>
         <section class="card">
-          ${[90, 180, 365].map(n => `<button class="btn" data-vdays="${n}">${n}天</button>`).join('')}
+          ${[90, 180, 365].map(n => `<button class="btn" aria-pressed="${n === vdotDays}" data-vdays="${n}">${n}天</button>`).join('')}
           <div class="chart"><canvas id="powerTrend"></canvas></div>
         </section>
         ${pages.paces()}
         <section class="card"><h3>Daniels成绩预测</h3>
-          <p>心率近似跑力推估，非实测；2:45全马所需 VDOT ${f(RW.vdot(42195, 9900))}</p>
+          <p>近 42 天最佳有效表现推估，非实测；2:45全马所需 VDOT ${f(RW.vdot(42195, 9900))}</p>
           ${table(['距离', '推估成绩'], predictions)}
           <p>六个月竞赛跑力 ${f(r.compVdot)} · 类型 ${esc(r.runnerType || '证据不足')}。仅认手动确认比赛。</p>
           ${r.races.length ? '' : '<a href="#records">无确认比赛，去记录页标星</a>'}
         </section>
         <section class="card"><h3>PB 最佳 / 次佳</h3>
-          <p>整段活动成绩，非官方、非分段最佳；主段距离带：5K 4.9–5.25 / 10K 9.85–10.4 / 半马 20.9–21.9 / 全马 41.9–43.3km。</p>
+          <p>仅统计本机已标星确认的比赛；缺失显示 --，不以普通训练补齐。</p>
           ${table(['距离', '最佳', '次佳'], pbRows)}
-          <p>用户设置 PB：${esc(S().pb)}（${+S().raceDist / 1000}km），单独列示。</p>
+
         </section>
         ${gapCard()}`;
     };
@@ -285,7 +289,7 @@
         <section class="card">
           <div class="coach-head"><h3>活动列表</h3><span class="pill">共 ${acts.length} 条</span></div><p class="muted">☆ 点亮为 ★ 表示你确认这是一场比赛，只有确认的比赛才参与竞赛跑力。</p>
           <ul class="act-list">${listRows.join('')}</ul>
-          <div class="row pager"><button id="prevRecords" class="btn">上一页</button><span class="muted">第 ${rec.page} / ${Math.max(1, Math.ceil(acts.length / 30))} 页</span><button id="nextRecords" class="btn">下一页</button></div>
+          <div class="row pager"><button id="prevRecords" ${rec.page <= 1 ? 'disabled' : ''} class="btn">上一页</button><span class="muted">第 ${rec.page} / ${Math.max(1, Math.ceil(acts.length / 30))} 页</span><button id="nextRecords" ${rec.page * 30 >= acts.length ? 'disabled' : ''} class="btn">下一页</button></div>
         </section>`;
     };
     pages.records.after = () => {

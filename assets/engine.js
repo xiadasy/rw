@@ -185,6 +185,13 @@
     return { flags: f, exclude };
   }
 
+  function completeWeeks(segs, today) {
+    const mon = mondayOf(today), start = addDays(mon, -28), end = addDays(mon, -1);
+    const rows = segs.filter(x => x.day >= start && x.day <= end);
+    const covered = segs.some(x => x.day <= start), unknown = rows.filter(x => !Number.isFinite(x.load)).length;
+    return {start,end,covered,unknown, km:covered ? rows.reduce((n,x)=>n+x.km,0)/4 : null,
+      load:covered && !unknown ? rows.reduce((n,x)=>n+x.load,0)/4 : null};
+  }
   // ---------- 主分析 ----------
   function analyze(rawActs, userSettings, raceOverrides) {
     const S = Object.assign({}, DEFAULTS, userSettings || {});
@@ -272,9 +279,9 @@
     const raceByDay = Array.from({ length: nDays }, () => []);
     sessions.forEach(x => { if (x.raceVdot) raceByDay[idx[x.day]].push(x.raceVdot); });
 
-    // 当前跑力：42 天内即时跑力加权平均（今天权重 1，42 天前 0.5），比赛权重 ×3；停练衰退
+    // 仅作负荷的历史心率基准：42 天内即时跑力加权平均（今天权重 1，42 天前 0.5），比赛权重 ×3；停练衰退
     const calib = 0;
-    const cur = new Array(nDays).fill(null); let lastVal = null, lastIdx = -1;
+    const loadRef = new Array(nDays).fill(null); let lastVal = null, lastIdx = -1;
     for (let i = 0; i < nDays; i++) {
       let sw = 0, sv = 0, n = 0;
       for (let j = Math.max(0, i - 41); j <= i; j++) {
@@ -282,20 +289,33 @@
         ivByDay[j].forEach(v => { sw += w; sv += w * v; n++; });
         raceByDay[j].forEach(v => { sw += 3 * w; sv += 3 * w * v; n++; });
       }
-      if (n >= 3 || (n > 0 && lastVal == null)) { lastVal = sv / sw; lastIdx = i; cur[i] = lastVal + calib; }
+      if (n >= 3 || (n > 0 && lastVal == null)) { lastVal = sv / sw; lastIdx = i; loadRef[i] = lastVal + calib; }
       else if (lastVal != null) {
         const gap = i - lastIdx; let dec = 0;
         if (gap > 14 && gap <= 28) dec = 0.06 * (gap - 14) / 14;
         else if (gap > 28) dec = Math.min(0.25, 0.06 + 0.13 * (gap - 28) / 35);
         const recent = n > 0 ? sv / sw : lastVal;
-        cur[i] = (n > 0 ? recent : lastVal * (1 - dec)) + calib;
+        loadRef[i] = (n > 0 ? recent : lastVal * (1 - dec)) + calib;
       }
     }
-    const curAt = i => { for (let k = i; k >= 0; k--) if (cur[k] != null) return cur[k]; return null; };
+    // 成绩等效以整段耗时为准，不把恢复跑当全力测验来平均。
+    const candidates = sessions.flatMap(x => {
+      const m = x.main, seconds = m.elapsedS || m.timeS || m.movS;
+      if (m.exclude || m.km < 3 || seconds < m.movS || m.flags.some(f => ['trail','treadmill'].includes(f.k))) return [];
+      const score = x.isRace ? x.raceVdot : vdot(m.km * 1000, seconds);
+      return positive(score) ? [{day:x.day, title:x.title, km:m.km, seconds, score, race:x.isRace}] : [];
+    });
+    function evidence(day) {
+      const start = addDays(day, -41), samples = candidates.filter(s => s.day >= start && s.day <= day);
+      const races = samples.filter(s => s.race), pool = races.length ? races : samples;
+      return {start, end:day, count:samples.length, races:races.length, best:pool.reduce((a,b) => !a || b.score >= a.score ? b : a, null)};
+    }
+    const recent = evidence(today), cur = days.map(d => evidence(d).best?.score ?? null);
+    const curAt = i => cur[i] ?? null;
 
     // 6. 训练指数（单段）：每分钟计点 × 分钟；强度取心率强度与配速强度较高者
     segs.forEach(s => {
-      const i = idx[s.day]; const V = curAt(i - 1) || curAt(i);
+      const i = idx[s.day]; const V = loadRef[i - 1] || loadRef[i];
       const fHr = Number.isFinite(s.hrr) && s.hr >= 90 && s.hr <= maxHr && maxHr > restHr ? s.hrr : null;
       const usePace = !s.exclude && !s.flags.some(f => f.k === 'treadmill');
       const fPace = usePace && positive(V) && positive(s.gapPace) ? vo2(60000 / s.gapPace) / V : null;
@@ -369,7 +389,7 @@
 
     return {
       S, maxHr, restHr, lthr, p99, topMax, segs, sessions, days, idx, load, ctl, atl, tsb, cur, curAt, iT, today,
-      curNow, trend3w: curNow != null && v3 != null ? curNow - v3 : null, run8, run10,
+      curNow, recent, trend3w: curNow != null && v3 != null ? curNow - v3 : null, run8, run10,
       weekList, monthList, races, bestList, compVdot, runnerType, scatter: sc, sweet, monkey, calib,
       unknownDays, quality: series.quality, filteredCount: rawActs.length - acts.length,
       suggestCalib: null
@@ -433,5 +453,5 @@
     return n < 0 ? null : n;
   }
 
-  G.RW = { daysToPositive, projectTaper, validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtHMS, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
+  G.RW = { completeWeeks, daysToPositive, projectTaper, validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtHMS, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
 })(typeof window !== 'undefined' ? window : globalThis);
