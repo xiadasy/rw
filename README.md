@@ -1,59 +1,65 @@
-# RW · 跑步训练分析
+# RW v2 · 训练控制台
 
-RW 是我自己用的跑步训练分析网页，只有一个静态页面，不需要后端。
-方法参考 Jack Daniels 跑力公式、Banister 冲击-反应（体能/疲劳）模型和公开的跑步科学文章，**与任何商业平台无关**。所有数值都是估算，只作训练参考。
+简体中文静态跑步训练网页。直接打开 `index.html`，无需后端、账户或外部服务；Chart.js 随仓库提供。
 
-## 打开方式
+## 实际功能
 
-- 本地：直接双击 `index.html`；或在仓库目录运行 `python3 -m http.server 8000`，再打开 http://localhost:8000
-- GitHub Pages：仓库 Settings → Pages → Source 选 `main` 分支根目录，即可在手机上访问（仓库保持私有时需要相应的 Pages 权限）。
+- **首页**：今日状况、42/7体能疲劳、数据新鲜度/缺失警示、比赛目标和课表入口。
+- **跑力 / 负荷**：平均心率与配速近似、手动确认比赛、历史趋势与减量情景模拟（保留负荷比例/完整休息天数，不是处方）。EWMA从0开始，TSB使用前一天；未来和非法日期记录被过滤。上海日期固定为 Asia/Shanghai。
+- **跑量 / 区间 / 配速表**：周跑量、按年份分组的月表、平均强度区间与配速参考。
+- **计算器**：默认5公里23:00，Daniels VDOT或Riegel等效换算（指数1.03–1.15）；明确输入VDOT；VO2max默认62，不能直接单值预测，只有用户主动假设等于VDOT才显示整分钟理论参考，非成绩预测。马拉松成绩↔配速及5公里/10公里/半程/30公里/40公里/终点累计分段。
+- **课表**：默认空，本地新建/编辑日期、类型、结构、公里、目标、状态、RPE和反馈；周计划/真实公里及四种状态计数；严格校验JSON导入导出。未来21天内可预览并确认保存保守的赛前减量草案，非2:45达标承诺。GPS仅作同日参考，不自动完成。
+- **记录 / 设置**：真实训练搜索/月份筛选/分页、手动比赛确认、心率和比赛目标设置、Garmin CSV本地合并/替换、导出活动JSON。
 
-## 页面
+## 重要口径
 
-| 页 | 内容 |
-|---|---|
-| 总览 | 比赛倒计时、目标与推估、当前跑力 / 体能 / 疲劳 / 状况、状况色带、默认减量估计、近 12 周跑量 |
-| 跑力 | 当前跑力与即时跑力趋势、比赛点、目标线、取样统计、竞赛跑力与校准建议 |
-| 负荷 | 体能(CTL 42 天)/疲劳(ATL 7 天)/状况(TSB) 曲线和色带、**减量模拟器**（方案、比例、休息天、自动求解到 +2）、每周训练指数、跑量甜区 |
-| 跑量 | 周跑量、月度表、最长 10 次 |
-| 区间 | 心率区间、配速区间、各区训练指数分布 |
-| 配速表 | 按跑力推出 E/M/T/A/I/R 六区配速、储备心率区间、阈值心率对照 |
-| 预测 | Daniels 比赛成绩预测与计算器 |
-| 记录 | 全部训练，筛选/排序/搜索，星号标记比赛，标出被排除的原因 |
-| 方法 | 所有公式和 RW 自定的参数 |
-| 设置 | 静息/最大/阈值心率、比赛与目标、校准开关、导入 CSV、导出 |
+负荷是 **RW平均值计点**，不是TRIMP、没有性别系数，不冒充RQ公式。RQ各版本不同，阈值不可套用；参考区不是最优训练区，也不是过度训练诊断。无校准开关、无推荐校准、无固定4%修正。默认静息心率48是假设值，请按实测设置。
 
-设置、手动标记的比赛、浏览器内导入的数据都存在本机浏览器 localStorage，不上传。
+缺少可信心率和配速基准的负荷为 `null`。图表保留空值；EWMA按0更新仅为数据不完整下界，并非没有训练。只有平均值，没有逐秒数据，不能还原间歇强度。
 
-## 更新数据
+所有持久化仅当前浏览器 localStorage，无云同步。换设备/来源或清理浏览器会影响数据，请导出备份。存储受限时保存会提示失败。
 
-方法一（推荐，数据进仓库）：
+## 更新真实记录
 
-1. 在 Garmin Connect「活动」列表导出 CSV（Activities.csv）。
-2. 运行：
-   ```bash
-   python3 scripts/build_data.py ~/Downloads/Activities.csv
-   ```
-   会生成 `data/activities.json` 和 `data/activities.js`（页面读取后者，`file://` 也能打开）。
-3. `git add data && git commit -m "更新数据" && git push`
+在设置页导入Garmin活动CSV，仅改变浏览器副本，不改仓库文件。也保留历史转换脚本：
 
-方法二（临时）：页面「设置 → 导入 CSV」，选择合并或替换，只存在当前浏览器。
-
-## 需要自己确认的参数
-
-- **静息心率默认 48，是假设值**。请在设置里改成晨起实测值，它直接影响心率区间、即时跑力和训练指数。
-- 最大心率默认取记录中最大心率的第 99 百分位；有实测值请填写。
-- 只有每次训练的平均值（没有逐秒数据），所以间歇课的训练指数会偏低，即时跑力只取稳定跑。
-
-## 目录
-
+```bash
+python3 scripts/build_data.py 路径/Activities.csv
 ```
-index.html              页面骨架
-assets/style.css        样式（暗色主题）
-assets/engine.js        计算引擎：解析、合并、跑力、训练指数、CTL/ATL/TSB、减量模拟、预测
-assets/app.js           界面与图表
-assets/vendor/          Chart.js 4.4.6
-data/activities.*       训练数据（由脚本生成）
-scripts/build_data.py   Garmin CSV → JSON
-docs/RQ-methods-research.md  公开方法调研笔记（带来源链接和可信度）
+
+该命令会重建 `data/activities.json` 与 `data/activities.js`，仅在确实需要更新内置数据时使用。无需提交CSV。
+
+## 测试（Node内置，无需安装依赖）
+
+```bash
+node --test tests/*.test.js
+TZ=America/Los_Angeles node --test tests/*.test.js
+node --check assets/engine.js
+node --check assets/calculators.js
+node --check assets/planner.js
+node --check assets/app.js
 ```
+
+测试覆盖日期跨年/闰年/上海午夜、时间配速、5公里23分钟VDOT与换算、无效输入、42/7边界、前一天TSB、未知负荷、未来活动、手动比赛及课表校验/存储。另已通过1440/390/320宽度全导航静态渲染、计算器和课表交互/导入导出/刷新持久化及460条原CSV导入验收；未做iPhone Safari真机测试。
+
+## 模块与交接
+
+- `assets/engine.js`：分析及纯函数 `RW.loadSeries`
+- `assets/calculators.js`：独立纯计算
+- `assets/planner.js`：版本化 `rw.plan.v1` 课表
+- `assets/app.js` / `style.css` / `index.html`：界面和本地操作
+- `data/`：原活动数据
+- `docs/HANDOFF-v2.md`：完整数据结构、存储、限制与未来集成边界
+
+不含插件、embed、PWA、MCP服务或iOS实现。未来HTTPS鉴权MCP及真正iOS小组件需另行建设；阿尔克待用户提供链接。历史调研资料保留于 `docs/`，不代表当前实现是第三方算法复刻。
+
+## 模型与未来集成说明
+公开来源复核、RQ不同版本阈值差异、VO2max与VDOT区分、真正iPhone组件/Scriptable及HTTPS MCP后续条件，见 [v2审计](docs/V2-audit-and-next.md)。静态JSON不是MCP服务，当前没有Garmin自动同步。
+
+### 可选浏览器回归
+安装Python Playwright与Chromium（测试依赖，不是网页运行依赖），先运行 `python3 -m http.server 8766 --bind 127.0.0.1`，另开终端运行：
+```bash
+python3 tests/browser_smoke.py
+python3 tests/browser_interactions.py
+```
+可用环境变量 `CHROME_BIN` 指定Chromium路径、`RW_TEST_URL` 指定静态服务、`RW_TEST_ARTIFACTS` 指定截图/报告目录；默认输出到已忽略的test-artifacts目录。测试只用隔离浏览器上下文及合成数据，不登录任何账户。

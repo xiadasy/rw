@@ -1,6 +1,6 @@
-/* RW 计算引擎：所有公式集中在这里，方法说明页逐条解释。
- * 依据：Daniels 跑力公式、Banister 冲击-反应模型，以及 docs/RQ-methods-research.md 里整理的公开方法。
- * 标注【RW 自定】的部分是我们自己的取舍，不代表任何第三方的真实算法。 */
+/* RW 计算引擎：Daniels 成绩等效公式与 RW 自定的平均值计点。
+ * 负荷不是 TRIMP，无性别系数，不是 RQ 官方算法；RQ 各版本不同不可套用。
+ * 42/7 日 EWMA 从 0 开始；未知负荷按 0 更新只是数据不完整下界。 */
 (function (G) {
   'use strict';
 
@@ -45,14 +45,17 @@
   function dur(v) {
     if (v == null) return null;
     const s = String(v).trim(); if (s === '' || s === '--') return null;
-    const p = s.split(':').map(Number); if (p.some(x => !Number.isFinite(x))) return null;
-    return p.reduce((t, x) => t * 60 + x, 0);
+    if (!/^\d+(?::\d{1,2})?:\d{2}(?:\.\d+)?$/.test(s)) return null;
+    const p = s.split(':').map(Number);
+    if (p[p.length - 1] >= 60 || (p.length === 3 && p[1] >= 60)) return null;
+    const seconds = p.reduce((t, x) => t * 60 + x, 0);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
   }
   function pick(r, k) { for (const n of ALIASES[k]) if (n in r) return r[n]; return null; }
   function normalizeRow(r) {
     const type = String(pick(r, 'type') || '').trim();
     if (!/跑|run/i.test(type)) return null;
-    const start = String(pick(r, 'start') || '').trim(); if (!start) return null;
+    const start = String(pick(r, 'start') || '').trim(); if (!validDate(start.slice(0, 10))) return null;
     const km = num(pick(r, 'km')); if (!km || km <= 0) return null;
     const timeS = dur(pick(r, 'time')); const movS = dur(pick(r, 'moving')) || timeS;
     if (!movS) return null;
@@ -74,7 +77,15 @@
 
   // ---------- 日期工具 ----------
   const DAY = 86400000;
-  const toMs = d => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10));
+  function validDate(d) {
+    if (typeof d !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(d) || +d.slice(0, 4) < 100) return false;
+    const ms = Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10));
+    return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === d;
+  }
+  function shanghaiToday(now = new Date()) {
+    return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  }
+  const toMs = d => validDate(d) ? Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) : NaN;
   const fromMs = ms => new Date(ms).toISOString().slice(0, 10);
   const addDays = (d, n) => fromMs(toMs(d) + n * DAY);
   const diffDays = (a, b) => Math.round((toMs(a) - toMs(b)) / DAY);
@@ -84,10 +95,21 @@
   // ---------- Daniels 跑力公式 ----------
   const vo2 = v => -4.6 + 0.182258 * v + 0.000104 * v * v;           // v: 米/分钟
   const pctMax = t => 0.8 + 0.1894393 * Math.exp(-0.012778 * t) + 0.2989558 * Math.exp(-0.1932605 * t); // t: 分钟
-  const vdot = (m, s) => { const t = s / 60; return vo2(m / t) / pctMax(t); };
-  function raceTime(V, m) { let lo = 60, hi = 60000; for (let i = 0; i < 70; i++) { const mid = (lo + hi) / 2; if (vdot(m, mid) > V) lo = mid; else hi = mid; } return (lo + hi) / 2; }
+  const positive = x => typeof x === 'number' && Number.isFinite(x) && x > 0;
+  const vdot = (m, s) => {
+    if (!positive(m) || !positive(s)) return null;
+    const t = s / 60, v = vo2(m / t) / pctMax(t);
+    return positive(v) ? v : null;
+  };
+  function raceTime(V, m) {
+    if (!positive(V) || !positive(m)) return null;
+    let lo = 0.001, hi = 600000;
+    if ((vdot(m, lo) || 0) < V) return null;
+    for (let i = 0; i < 90; i++) { const mid = (lo + hi) / 2; if ((vdot(m, mid) || 0) > V) lo = mid; else hi = mid; }
+    return (lo + hi) / 2;
+  }
   function velAt(V, f) { const c = 4.6 + f * V; return (-0.182258 + Math.sqrt(0.182258 ** 2 + 4 * 0.000104 * c)) / (2 * 0.000104); }
-  const paceAt = (V, f) => 60000 / velAt(V, f); // 秒/公里
+  const paceAt = (V, f) => positive(V) && positive(f) ? 60000 / velAt(V, f) : null; // 秒/公里
 
   // 区间（RQ 公开的储备心率百分比；配速区间用相同的 %VO2max 边界，R 区为 RW 自定）
   const ZONES = [
@@ -115,7 +137,22 @@
     restHr: 48, maxHr: null, lthr: null, raceName: '上海马拉松', raceDate: '2026-12-06', raceDist: 42195,
     goal: '2:45:00', pb: '2:38:07', calib: 0, calibOn: false, today: null
   };
-  function parseHMS(s) { if (!s) return null; const p = String(s).split(':').map(Number); if (p.some(x => !Number.isFinite(x))) return null; return p.reduce((t, x) => t * 60 + x, 0); }
+  const parseHMS = dur;
+
+  // RW 平均值计点的日负荷；未知按 0 更新，体能/疲劳为已知负荷下界；两者差值并不是下界。
+  function loadSeries(load) {
+    const ctl = [], atl = [], tsb = [], unknownDays = [];
+    let c = 0, a = 0;
+    load.forEach((v, i) => {
+      tsb.push(c - a);
+      const known = typeof v === 'number' && Number.isFinite(v) && v >= 0;
+      if (!known) unknownDays.push(i);
+      const L = known ? v : 0;
+      c += (L - c) / 42; a += (L - a) / 7;
+      ctl.push(c); atl.push(a);
+    });
+    return { ctl, atl, tsb, unknownDays, quality: unknownDays.length ? 'incomplete-lower-bound' : 'average-estimate' };
+  }
 
   // ---------- 数据质量 ----------
   const INTERVAL_RE = /(\d+\s*[x×X＊*]\s*\d+)|间歇|间隔|组|配速跑|法特莱克|fartlek|interval/i;
@@ -124,11 +161,11 @@
     const pace = a.movS / a.km;
     if (/跑步机|室内|treadmill|indoor/i.test(a.type)) f.push({ k: 'treadmill', t: '跑步机：配速来自脚步估算，不计跑力' });
     if (/越野|trail/i.test(a.type)) f.push({ k: 'trail', t: '越野：坡度大，不计跑力' });
-    if (a.hr == null) f.push({ k: 'nohr', t: '没有心率：负荷只按配速估算' });
+    if (a.hr == null) f.push({ k: 'nohr', t: '没有心率：仅有可信配速基准时估算，否则负荷未知' });
     else if (a.hr < 90) { f.push({ k: 'lowhr', t: '平均心率过低：疑似步行或心率带脱落' }); exclude = true; }
     if (pace < 170) { f.push({ k: 'gps', t: '配速快于 2:50/km：GPS 误差' }); exclude = true; }
     else if (pace > 540 && a.km >= 0.5) { f.push({ k: 'slow', t: '配速慢于 9:00/km：疑似步行或暂停未停表' }); exclude = true; }
-    if (!exclude && a.hr != null && a.hr >= 90) {
+    if (!exclude && a.hr != null && a.hr >= 90 && maxHr > restHr) {
       const hrr = (a.hr - restHr) / (maxHr - restHr);
       const v = a.km * 1000 / (a.movS / 60);
       const est = hrr > 0 ? vo2(v) / hrr : 999;
@@ -141,15 +178,17 @@
   // ---------- 主分析 ----------
   function analyze(rawActs, userSettings, raceOverrides) {
     const S = Object.assign({}, DEFAULTS, userSettings || {});
-    const acts = rawActs.slice().sort((a, b) => a.start < b.start ? -1 : 1);
+    S.calib = 0; S.calibOn = false;
+    const today = validDate(S.today) ? S.today : shanghaiToday();
+    const acts = rawActs.filter(a => validDate(a.day) && a.day <= today && positive(a.km) && positive(a.movS) && typeof a.start === 'string' && a.start.slice(0, 10) === a.day).slice().sort((a, b) => a.start < b.start ? -1 : 1);
     if (!acts.length) return null;
     // 最大心率默认值：记录中最大心率的 99 分位（避开偶发尖峰），并列出前十名供核对
-    const mx = acts.map(a => a.maxHr).filter(x => x).sort((a, b) => a - b);
-    const p99 = mx.length ? mx[Math.min(mx.length - 1, Math.floor(mx.length * 0.99))] : 185;
+    const mx = acts.map(a => a.maxHr).filter(x => Number.isFinite(x) && x >= 100 && x <= 240).sort((a, b) => a - b);
+    const p99 = mx.length ? mx[Math.min(mx.length - 1, Math.floor(mx.length * 0.99))] : null;
     const maxHr = +S.maxHr || p99; const restHr = +S.restHr || 48;
-    const lthr = +S.lthr || Math.round(restHr + 0.88 * (maxHr - restHr));
+    const lthr = +S.lthr || (maxHr > restHr ? Math.round(restHr + 0.88 * (maxHr - restHr)) : null);
     const topMax = acts.filter(a => a.maxHr).sort((a, b) => b.maxHr - a.maxHr).slice(0, 10).map(a => ({ day: a.day, maxHr: a.maxHr, title: a.title, km: a.km }));
-    const hrrOf = hr => hr == null ? null : (hr - restHr) / (maxHr - restHr);
+    const hrrOf = hr => !Number.isFinite(hr) || maxHr == null || maxHr <= restHr ? null : (hr - restHr) / (maxHr - restHr);
 
     // 1. 单段基础量 + 数据质量
     const segs = acts.map(a => {
@@ -193,6 +232,7 @@
       if (s.movS < 15 * 60) { s.ivReason = '不足 15 分钟'; return; }
       if (s.interval) { s.ivReason = '间歇或变速课'; return; }
       if (s.climb > 20) { s.ivReason = '爬升过大'; return; }
+      if (s.hrr == null) { s.ivReason = '缺少可信心率基准'; return; }
       if (s.hrr < 0.59 || s.hrr > 0.88) { s.ivReason = s.hrr < 0.59 ? '强度低于 1 区' : '强度高于 4 区，心率失去线性'; return; }
       const v = 60000 / s.gapPace; s.ivdot = vo2(v) / s.hrr;
     });
@@ -204,14 +244,14 @@
       x.raceDist = band ? band[3] : null;
       x.autoRace = !!band && !m.exclude && m.hrr != null && m.hrr >= 0.85 && !x.treadmill;
       const ov = raceOverrides ? raceOverrides[x.id] : undefined;
-      x.isRace = ov === undefined ? x.autoRace : !!ov;
+      x.isRace = ov === true;
       // 比赛按标准距离计算（GPS 多出的距离不算），不在标准距离就按实测距离
-      x.raceVdot = x.isRace && !m.exclude ? vdot((band ? band[0] : m.km) * 1000, m.movS) : null;
+      x.raceVdot = x.isRace && !m.exclude ? vdot((band ? band[0] : m.km) * 1000, m.elapsedS || m.timeS || m.movS) : null;
     });
 
     // 5. 日序列
     const first = acts[0].day;
-    const today = S.today || (() => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); })();
+    // today 已按上海时区确定，未来记录已过滤。
     const lastDay = today > acts[acts.length - 1].day ? today : acts[acts.length - 1].day;
     const nDays = diffDays(lastDay, first) + 1;
     const days = Array.from({ length: nDays }, (_, i) => addDays(first, i));
@@ -223,7 +263,7 @@
     sessions.forEach(x => { if (x.raceVdot) raceByDay[idx[x.day]].push(x.raceVdot); });
 
     // 当前跑力：42 天内即时跑力加权平均（今天权重 1，42 天前 0.5），比赛权重 ×3；停练衰退
-    const calib = S.calibOn ? (+S.calib || 0) : 0;
+    const calib = 0;
     const cur = new Array(nDays).fill(null); let lastVal = null, lastIdx = -1;
     for (let i = 0; i < nDays; i++) {
       let sw = 0, sv = 0, n = 0;
@@ -245,38 +285,35 @@
 
     // 6. 训练指数（单段）：每分钟计点 × 分钟；强度取心率强度与配速强度较高者
     segs.forEach(s => {
-      const i = idx[s.day]; const V = curAt(i - 1) || curAt(i) || 50;
-      const fHr = s.hrr != null && !s.flags.some(f => f.k === 'lowhr') ? s.hrr : null;
+      const i = idx[s.day]; const V = curAt(i - 1) || curAt(i);
+      const fHr = Number.isFinite(s.hrr) && s.hr >= 90 && s.hr <= maxHr && maxHr > restHr ? s.hrr : null;
       const usePace = !s.exclude && !s.flags.some(f => f.k === 'treadmill');
-      const fPace = usePace ? vo2(60000 / s.gapPace) / V : null;
+      const fPace = usePace && positive(V) && positive(s.gapPace) ? vo2(60000 / s.gapPace) / V : null;
       let f, by;
-      if (fHr == null && fPace == null) { f = 0.5; by = '默认'; }
+      if (fHr == null && fPace == null) { f = null; by = 'unknown'; }
       else if (fPace != null && (fHr == null || fPace > fHr)) { f = fPace; by = '配速'; }
       else { f = fHr; by = '心率'; }
       s.intensity = f; s.zone = zoneDecimal(f); s.loadBy = by;
       s.hrZone = fHr != null ? zoneDecimal(fHr) : null; s.paceZone = fPace != null ? zoneDecimal(fPace) : null;
-      s.load = pointsPerMin(s.zone) * s.movS / 60;
+      s.load = f == null ? null : pointsPerMin(s.zone) * s.movS / 60;
+      s.unknown = s.load == null;
+      if (s.unknown) s.flags.push({ k: 'unknown', t: '负荷未知：缺少可信心率或配速基准' });
     });
     sessions.forEach(x => {
-      x.load = x.segs.reduce((t, s) => t + s.load, 0);
+      x.load = x.segs.some(s => s.load == null) ? null : x.segs.reduce((t, s) => t + s.load, 0);
       x.ivdot = x.segs.map(s => s.ivdot).filter(Boolean).reduce((m, v, _, arr) => m == null ? v : m, null);
       x.zone = x.main.zone; x.loadBy = x.main.loadBy;
     });
     const load = new Array(nDays).fill(0);
-    segs.forEach(s => { load[idx[s.day]] += s.load; });
+    segs.forEach(s => { const i = idx[s.day]; load[i] = s.load == null || load[i] == null ? null : load[i] + s.load; });
 
     // 7. 体能 / 疲劳 / 状况（Banister，时间常数 42 / 7 天；今天状况 = 昨天体能 − 昨天疲劳）
-    const seed = load.slice(0, 42).reduce((t, x) => t + x, 0) / Math.min(42, nDays);
-    const ctl = [], atl = [], tsb = [];
-    let c = seed, a = seed;
-    for (let i = 0; i < nDays; i++) {
-      tsb.push(c - a);                 // 用前一天收盘值
-      c += (load[i] - c) / 42; a += (load[i] - a) / 7;
-      ctl.push(c); atl.push(a);
-    }
+    const series = loadSeries(load);
+    const { ctl, atl, tsb } = series;
+    const unknownDays = series.unknownDays.map(i => days[i]);
     const iT = idx[today] != null ? idx[today] : nDays - 1;
 
-    // 8. 状况提醒（RQ 公开规则）
+    // 8. RW 参考区计数：阈值仅提示，不作诊断
     let run8 = 0, run10 = 0;
     for (let i = iT; i >= 0 && tsb[i] < -8; i--) run8++;
     for (let i = iT; i >= 0 && tsb[i] < -10; i--) run10++;
@@ -286,9 +323,9 @@
     sessions.forEach(x => {
       const w = mondayOf(x.day); const m = x.day.slice(0, 7);
       const W = weeks[w] || (weeks[w] = { week: w, km: 0, n: 0, longest: 0, load: 0, movS: 0 });
-      W.km += x.km; W.n++; W.longest = Math.max(W.longest, x.km); W.load += x.load; W.movS += x.movS;
+      W.km += x.km; W.n++; W.longest = Math.max(W.longest, x.km); W.load = W.load == null || x.load == null ? null : W.load + x.load; W.movS += x.movS;
       const M = months[m] || (months[m] = { month: m, km: 0, n: 0, longest: 0, load: 0, movS: 0 });
-      M.km += x.km; M.n++; M.longest = Math.max(M.longest, x.km); M.load += x.load; M.movS += x.movS;
+      M.km += x.km; M.n++; M.longest = Math.max(M.longest, x.km); M.load = M.load == null || x.load == null ? null : M.load + x.load; M.movS += x.movS;
     });
     const weekList = []; for (let w = mondayOf(first); w <= lastDay; w = addDays(w, 7)) weekList.push(weeks[w] || { week: w, km: 0, n: 0, longest: 0, load: 0, movS: 0 });
     weekList.forEach(W => { const e = Math.min(idx[addDays(W.week, 6)] ?? nDays - 1, nDays - 1); W.ctl = ctl[e]; W.cur = curAt(e); });
@@ -324,30 +361,21 @@
       S, maxHr, restHr, lthr, p99, topMax, segs, sessions, days, idx, load, ctl, atl, tsb, cur, curAt, iT, today,
       curNow, trend3w: curNow != null && v3 != null ? curNow - v3 : null, run8, run10,
       weekList, monthList, races, bestList, compVdot, runnerType, scatter: sc, sweet, monkey, calib,
-      suggestCalib: suggestCalibration(sessions, segs)
+      unknownDays, quality: series.quality, filteredCount: rawActs.length - acts.length,
+      suggestCalib: null
     };
   }
 
-  // 建议校准量：比赛级记录上「竞赛跑力 − 同期即时跑力」的中位数【RW 自定，可选】
-  function suggestCalibration(sessions, segs) {
-    const diffs = [];
-    sessions.filter(x => x.raceVdot).forEach(x => {
-      const near = segs.filter(s => s.ivdot && Math.abs(diffDays(s.day, x.day)) <= 21).map(s => s.ivdot);
-      if (near.length >= 3) { near.sort((a, b) => a - b); diffs.push(x.raceVdot - near[Math.floor(near.length / 2)]); }
-    });
-    if (!diffs.length) return null; diffs.sort((a, b) => a - b);
-    return { value: diffs[Math.floor(diffs.length / 2)], n: diffs.length };
-  }
-
-  // 状况色带（数值来自 RQ 公开文字；连成色带为 RW 自定）
+  // RW 参考色带：非最优区，不作过度训练诊断
   function tsbBand(t) {
     if (t == null) return { key: 'na', label: '—', tip: '' };
-    if (t > 5) return { key: 'fresh', label: '偏松', tip: '体能大于疲勞很多，适合比赛周以外的恢复；赛前超过 +5 可能减得太多。' };
-    if (t >= 0) return { key: 'good', label: '状况良好', tip: '赛前目标区间：全马比赛日 0 ~ +5。' };
-    if (t >= -2) return { key: 'ok', label: '状况普通', tip: '训练与恢复大致平衡。' };
-    if (t >= -7) return { key: 'train', label: '轻度疲劳 · 有效训练', tip: '训练期 −2 ~ −7 最能带来进步。' };
-    if (t >= -10) return { key: 'tired', label: '疲劳偏高', tip: '低于 −8 属过度训练风险，连续 3 天要减量。' };
-    return { key: 'very', label: '非常疲劳', tip: '低于 −10 建议立即休息；连续 7 天属过量训练。' };
+    const tip = '仅为 RW 参考区提示，不是过度训练诊断；请结合体感、睡眠与健康情况。RQ 各版本不同，不可套用。';
+    if (t > 5) return { key: 'fresh', label: '恢复侧', tip };
+    if (t >= 0) return { key: 'good', label: '非负区', tip };
+    if (t >= -2) return { key: 'ok', label: '接近平衡', tip };
+    if (t >= -7) return { key: 'train', label: '负荷侧', tip };
+    if (t >= -10) return { key: 'tired', label: '负值较低', tip };
+    return { key: 'very', label: '留意恢复', tip };
   }
 
   // 减量推演：从明天到比赛前一天，每天负荷 = 基准 × 系数；返回比赛日早晨状况
@@ -374,5 +402,5 @@
   function fmtT(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); }
   function fmtPace(s) { if (s == null || !Number.isFinite(s)) return '—'; s = Math.round(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
-  G.RW = { parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
+  G.RW = { validDate, shanghaiToday, loadSeries, dur, parseCSV, normalizeRow, activitiesFromCSV, analyze, simulateTaper, pfitz, tsbBand, vdot, raceTime, paceAt, velAt, vo2, ZONES, zoneDecimal, pointsPerMin, parseHMS, fmtT, fmtPace, addDays, diffDays, mondayOf, DEFAULTS };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -6,12 +6,12 @@
 <meta name="theme-color" content="#0b0d0a">
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%230b0d0a%22/%3E%3Ctext x=%2216%22 y=%2222%22 font-size=%2216%22 font-weight=%22900%22 text-anchor=%22middle%22 fill=%22%23A8DC0C%22 font-family=%22Arial%22 font-style=%22italic%22%3ERW%3C/text%3E%3C/svg%3E">
-<title>RW · 跑步训练分析</title>
-<link rel="stylesheet" href="assets/style.css">
+<title>RW v2 · 训练控制台</title>
+<link rel="stylesheet" href="assets/style.css?v=2-20261125">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="logo">RW</span><span class="sub">跑步训练分析</span></div>
+  <div class="brand"><span class="logo">RW</span><span class="sub">训练控制台 / v2</span></div>
   <div class="meta" id="dataMeta"></div>
 </header>
 <nav class="tabs" id="tabs">
@@ -21,16 +21,18 @@
   <a href="#volume" data-t="volume">跑量</a>
   <a href="#zones" data-t="zones">区间</a>
   <a href="#paces" data-t="paces">配速表</a>
-  <a href="#predict" data-t="predict">预测</a>
+  <a href="#predict" data-t="predict">计算器</a>
+  <a href="#planner" data-t="planner">课表</a>
   <a href="#records" data-t="records">记录</a>
-  <a href="#method" data-t="method">方法</a>
   <a href="#settings" data-t="settings">设置</a>
 </nav>
 <main id="app"></main>
-<footer class="foot">RW 是个人训练分析工具，方法参考 Daniels 跑力公式、Banister 冲击-反应模型和公开的跑步科学文章，与任何商业平台无关。所有数值都是估算。</footer>
+<footer class="foot">RW v2 · 个人训练参考，不作健康诊断或达标承诺。负荷为 RW 平均值计点，不是 TRIMP 或 RQ 官方算法。所有持久化仅当前浏览器，无云同步。</footer>
 <script src="assets/vendor/chart.umd.min.js"></script>
 <script src="data/activities.js"></script>
-<script src="assets/engine.js"></script>
-<script src="assets/app.js"></script>
+<script src="assets/engine.js?v=2-20261125"></script>
+<script src="assets/calculators.js?v=2-20261125"></script>
+<script src="assets/planner.js?v=2-20261125"></script>
+<script src="assets/app.js?v=2-20261125"></script>
 </body>
 </html>
